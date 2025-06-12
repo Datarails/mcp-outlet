@@ -1,60 +1,27 @@
 import { execSync } from "child_process";
-import { MultiCloudConfig } from "../shared.ts";
+import { CloudConfig, FunctionConfig, MultiCloudConfig } from "../shared.ts";
 import { existsSync } from "fs";
 
 // Base configuration interface
-export interface BaseConfig {
+export interface BaseConfig extends CloudConfig {
   service: string;
   stage: string;
   version: string;
-  region: string;
-  subscriptionId: string;
-  tenantId: string;
   resourceGroup: string;
   containerName: string;
   storageAccountName: string;
   cacheStorageAccountName: string;
-  shareStorageName: string;
-}
-
-// Storage Account configuration
-export interface StorageConfig {
-  storageAccountName: string;
-  accountTier: string;
-  replicationType: string;
-  enableHttpsTrafficOnly: boolean;
-  minTlsVersion: string;
-  allowBlobPublicAccess: boolean;
-  cors: Array<{
-    allowedHeaders: string[];
-    allowedMethods: string[];
-    allowedOrigins: string[];
-    maxAgeInSeconds: number;
-  }>;
-  lifecycleRules: any[];
 }
 
 // Function App configuration
-export interface FunctionAppConfig {
-  functionAppName: string;
-  codePath: string; // Path to pre-bundled code (zip file or directory)
-  handler: string;
+export interface FunctionAppConfig extends FunctionConfig {
   runtimeStack: string;
   runtimeVersion: string;
-  memorySize: number;
-  timeout: number;
-  environment: Record<string, string>;
   osType: string;
   skuName: string;
   skuTier: string;
   logLevel: string;
   events?: ApiConfig[];
-  permissions?: {
-    storageAccounts?: string[];
-    customRoles?: string[];
-    includeLogging?: boolean;
-    includeMonitoring?: boolean;
-  };
 }
 
 // API Management configuration
@@ -118,6 +85,11 @@ export function validateConfig(config: MultiCloudConfig) {
   if (!config.functions || config.functions.length === 0) {
     throw new Error("At least one function configuration is required");
   }
+  const skuNames = new Set(this.config.functions.map((v) => v.skuName));
+  const skuTiers = new Set(this.config.functions.map((v) => v.skuTier));
+  if (skuNames.size > 1 || skuTiers.size > 1) {
+    throw new Error("All functions must have the same skuName and skuTier");
+  }
 
   config.functions.forEach((func, index) => {
     if (!func.name || func.name.trim() === "") {
@@ -155,24 +127,10 @@ export function validateConfig(config: MultiCloudConfig) {
     }
   });
 
-  // Validate storage configuration if provided
-  if (config.storage) {
-    if (!config.storage.name || config.storage.name.trim() === "") {
-      throw new Error("Storage name is required when storage is configured");
-    }
-
-    if (config.storage.type !== "object-storage") {
-      throw new Error(
-        "Only object-storage type is supported for Azure storage"
-      );
-    }
-  }
-
   console.log("✅ Azure configuration is valid");
 }
 
 export interface BicepDeploymentConfig {
-  storage?: StorageConfig;
   functionApps: FunctionAppConfig[];
   outputs?: OutputConfig;
   additionalTags?: Record<string, string>;
@@ -285,9 +243,7 @@ resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-// Function App for ${
-    primaryFunc.functionAppName
-  } - following working template structure
+// Function App for ${primaryFunc.name} - following working template structure
 resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
   name: functionAppName
   location: location
@@ -513,12 +469,6 @@ export async function deployStack(
         `az storage account create --resource-group ${baseConfig.resourceGroup} --name ${baseConfig.cacheStorageAccountName} --location ${baseConfig.region} --kind FileStorage --sku Premium_LRS --output none`,
         { stdio: "inherit" }
       );
-
-      // Create cache container
-      execSync(
-        `az storage share-rm create --resource-group ${baseConfig.resourceGroup} --storage-account ${baseConfig.cacheStorageAccountName} --name ${baseConfig.shareStorageName} --quota 1024 --enabled-protocols SMB --output none`,
-        { stdio: "inherit" }
-      );
     } catch (error) {
       console.log(
         "ℹ️ Cache storage account might already exist, continuing..."
@@ -614,16 +564,21 @@ export async function deployHandlers(
     console.log(
       `🔑 Adding storage account ${baseConfig.cacheStorageAccountName} to function app ${functionAppName}`
     );
+    const shareName = `${baseConfig.service}-${baseConfig.stage}-${functionAppConfigs[0].runtimeStack}`;
+
     try {
-      const directory = `${baseConfig.service}-${baseConfig.stage}-${functionAppConfigs[0].runtimeStack}`;
+      // Create cache share
       execSync(
-        `az storage directory create --share-name ${baseConfig.shareStorageName} --name ${directory} --account-name ${baseConfig.cacheStorageAccountName}`,
-        {
-          stdio: "inherit",
-        }
+        `az storage share-rm create --resource-group ${baseConfig.resourceGroup} --storage-account ${baseConfig.cacheStorageAccountName} --name ${shareName} --quota ${functionAppConfigs[0].cache.size} --enabled-protocols SMB --output none`,
+        { stdio: "inherit" }
       );
+    } catch (error) {
+      console.log("ℹ️ Cache share might already exist, continuing...");
+    }
+
+    try {
       execSync(
-        `az webapp config storage-account add --resource-group ${baseConfig.resourceGroup} --name ${functionAppName} --custom-id ${directory} --storage-type AzureFiles --share-name ${baseConfig.shareStorageName} --account-name ${baseConfig.cacheStorageAccountName} --mount-path /mnt/cache --access-key ${cacheStorageKey}`,
+        `az webapp config storage-account add --resource-group ${baseConfig.resourceGroup} --name ${functionAppName} --custom-id ${shareName} --storage-type AzureFiles --share-name ${shareName} --account-name ${baseConfig.cacheStorageAccountName} --mount-path ${functionAppConfigs[0].cache.mountPath} --access-key ${cacheStorageKey}`,
         {
           stdio: "inherit",
         }

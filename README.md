@@ -109,7 +109,7 @@ This moves the import cost to the cold start phase rather than request handling.
 
 UV provides lightning-fast package installation and caching:
 
-- **Strategic Caching**: Packages cached in `/mnt/cache` or `UV_CACHE_DIR`
+- **Strategic Caching**: Packages cached in `/mnt/cache` or `CACHE_DIR`
 - **No Bytecode Compilation**: `UV_COMPILE_BYTECODE=0` saves time
 - **Direct Installation**: `UV_BREAK_SYSTEM_PACKAGES=1` avoids virtual env overhead
 - **Optimized Environment**: Custom `PYTHONPATH` prioritizes UV cache

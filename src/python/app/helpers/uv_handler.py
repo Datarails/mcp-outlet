@@ -7,7 +7,7 @@ import sys
 
 def setup_uv_environment():
     env = os.environ.copy()
-    cache_dir = env.get("UV_CACHE_DIR", "/mnt/cache")
+    cache_dir = env.get("CACHE_DIR", "/mnt/cache")
 
     # Create installation directory within cache
     import site

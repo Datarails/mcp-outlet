@@ -133,9 +133,7 @@ class DeploymentOrchestrator {
       this.deployer.setFunctionsEnvironment();
       await this.package();
 
-      console.log(
-        `🚀 Starting deployment for ${this.config.provider}:${this.config.deploymentType}`
-      );
+      console.log(`🚀 Starting deployment for ${this.config.provider}`);
       console.log(`📋 Service: ${this.config.service}-${this.config.stage}`);
 
       await this.deployer.deploy(stackName);
@@ -147,9 +145,7 @@ class DeploymentOrchestrator {
 
   async package(): Promise<void> {
     try {
-      console.log(
-        `🚀 Starting packaging for ${this.config.provider}:${this.config.deploymentType}`
-      );
+      console.log(`🚀 Starting packaging for ${this.config.provider}`);
       await this.deployer.package();
       console.log("✅ Packaging completed successfully!");
     } catch (error) {
@@ -163,7 +159,6 @@ class DeploymentOrchestrator {
       this.deployer.validate();
       console.log("✅ Configuration is valid!");
       console.log(`📋 Provider: ${this.config.provider}`);
-      console.log(`📋 Type: ${this.config.deploymentType}`);
       console.log(`📋 Service: ${this.config.service}-${this.config.stage}`);
     } catch (error) {
       console.error("❌ Validation failed:", error);
