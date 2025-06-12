@@ -52,8 +52,8 @@ Both implementations share:
 
 Both languages implement identical request processing:
 
-```JSON-RPC Request → Input Validation → Method Routing → Execution → Response Formatting
-
+```
+JSON-RPC Request → Input Validation → Method Routing → Execution → Response Formatting
 ```
 
 The method routing map is mirrored between languages, ensuring that a request to either implementation produces the same result.
