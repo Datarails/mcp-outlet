@@ -1,0 +1,1132 @@
+# MCP Outlet - Universal MCP Runtime Orchestrator
+
+## Project Overview
+
+**MCP Outlet** is a multicloud TypeScript and Python MCP (Model Context Protocol) runtime orchestrator that can dynamically connect to and execute multiple MCP servers safely. The name "MCP Outlet" reflects its purpose as a universal electrical outlet for MCP servers - just as an electrical outlet provides safe power to any compatible device, MCP Outlet provides a secure runtime environment for any compatible MCP server without requiring specific deployment and risk management for each individual server.
+
+Built using a custom multicloud deployment framework with support for AWS, Azure, and GCP, MCP Outlet acts as a runtime machine that can safely execute untrusted or experimental MCP servers while providing comprehensive monitoring, tracing, and security features.
+
+## Why "MCP Outlet"?
+
+The name **"MCP Outlet"** is an analogy to electrical outlets:
+
+- **Universal Compatibility**: Just like how electrical outlets accept any compatible plug, MCP Outlet accepts any compatible MCP server configuration
+- **Safe Power Delivery**: Electrical outlets provide safe, regulated power; MCP Outlet provides safe, regulated runtime execution
+- **Risk Isolation**: Electrical outlets protect your home's wiring from device failures; MCP Outlet protects your infrastructure from MCP server failures
+- **Plug-and-Play**: No rewiring needed for new devices; no redeployment needed for new MCP servers
+- **Multiple Connections**: One outlet can serve multiple devices through adapters; one MCP Outlet instance can serve multiple MCP servers
+
+## Dual Language Implementation
+
+This project now supports **both TypeScript and Python implementations** that mirror each other:
+
+- **JavaScript/TypeScript**: ES modules for web and Node.js environments
+- **Python**: Modern Python with async/await for Python-native environments
+- **Shared Architecture**: Both languages implement the same patterns and APIs
+- **Unified Testing**: Shared test configuration that validates both implementations
+
+## Architecture Patterns
+
+### 1. Project Structure (Current)
+
+```
+mcp-outlet/                 # Main project directory
+├── src/                    # Main application source code
+│   ├── js/                 # JavaScript/TypeScript implementation
+│   │   ├── handlers/       # Business logic handlers (simplified)
+│   │   │   ├── helpers.ts  # Handler utilities and types
+│   │   │   ├── rpc.ts      # Main JSON-RPC handler with method routing
+│   │   │   └── dist/       # Compiled JavaScript output
+│   │   ├── helpers/        # Core utilities and shared logic
+│   │   │   ├── schema.ts   # Zod schemas and type definitions
+│   │   │   ├── error.ts    # Custom error classes and formatting
+│   │   │   ├── tracer.ts   # Tracing system with span management
+│   │   │   ├── McpCaller.ts # MCP client creation and management
+│   │   │   └── dist/       # Compiled JavaScript output
+│   │   └── tests/          # Test framework execution
+│   │       ├── setup.ts    # Global test setup and mock configuration
+│   │       ├── runner.test.ts # Dynamic test runner
+│   │       └── dist/       # Compiled test output
+│   └── python/             # Python implementation (COMPLETE)
+│       ├── app/            # Main Python application package
+│       │   ├── handlers/   # Python business logic handlers
+│       │   │   ├── helpers.py  # Handler utilities and types (Python)
+│       │   │   ├── rpc.py      # Main JSON-RPC handler (Python)
+│       │   │   └── __init__.py # Python module exports
+│       │   ├── helpers/    # Python core utilities
+│       │   │   ├── schema.py   # Pydantic schemas and type definitions
+│       │   │   ├── error.py    # Custom error classes (Python)
+│       │   │   ├── tracer.py   # Tracing system (Python)
+│       │   │   ├── mcp_caller.py # MCP client management (Python)
+│       │   │   └── __init__.py # Python module exports
+│       │   └── __init__.py # Main app module exports
+│       ├── tests/          # Python test framework
+│       │   ├── setup.py    # Python test setup with conditional mocking
+│       │   ├── test_dynamic.py # Python dynamic test runner
+│       │   └── __init__.py # Python test module exports
+│       ├── dist/           # Python build output
+│       ├── pyproject.toml  # Python project configuration
+│       ├── uv.lock         # Python dependency lock file
+│       ├── pytest.ini      # Pytest configuration
+│       └── .venv/          # Python virtual environment
+├── test/                   # Declarative test configuration (SHARED)
+│   ├── config.ts           # Comprehensive test case definitions
+│   ├── helpers.ts          # Test utilities and mock data generators
+│   ├── types.ts            # Test framework types and matchers
+│   ├── scripts.ts          # Test configuration generation scripts
+│   └── dist/               # Compiled test configuration
+├── deployments/            # Multicloud deployment framework
+│   ├── shared.ts           # Base deployer classes and shared schemas
+│   ├── multi-cloud.ts      # Main orchestrator and deployment factory
+│   ├── offline.ts          # Local development server with Express
+│   ├── aws/                # AWS-specific deployment implementations
+│   ├── azure/              # Azure-specific deployment implementations
+│   ├── package/            # Build and packaging system
+│   ├── tools/              # Deployment tools and utilities
+│   └── dist/               # Compiled deployment output
+├── layers/                 # External dependencies (e.g., uv.tgz)
+├── .mcp-outlet/            # Build artifacts and packaged functions
+│   ├── python/             # Python build artifacts
+│   ├── azure/              # Azure-specific artifacts
+│   └── *.zip               # Packaged deployment artifacts
+├── dist/                   # Global compiled output
+├── config.ts               # Main multicloud deployment configuration
+├── cursor-mcp-config.json  # MCP server configurations for Cursor integration
+├── setup-mcp.sh           # MCP setup script for Cursor
+├── jest.config.js          # Jest configuration with ES module support
+├── tsconfig.json          # TypeScript configuration
+├── package.json           # Dependencies and scripts (name: "mcp-outlet")
+└── .gitignore             # Git ignore patterns
+```
+
+### 2. Dual Language Handler Architecture
+
+Both TypeScript and Python implementations follow identical patterns:
+
+#### TypeScript Handler Pattern:
+
+```typescript
+// Simplified handler input/output types
+export type HandlerInput<T> = {
+  data: T;
+  headers: Record<string, string>;
+  pathParams: Record<string, string>;
+  queryParams: Record<string, string>;
+};
+
+export type HandlerConfiguration<T> = {
+  name: string;
+  inputSchema: z.ZodSchema;
+  outputSchema: z.ZodSchema;
+  execute: (args: HandlerInput<T>, context: any) => Promise<unknown>;
+};
+
+export type RuntimeContext = Record<string, unknown>;
+```
+
+#### Python Handler Pattern (Mirror Implementation):
+
+```python
+from typing import Dict, Any, Optional, Callable, Awaitable
+from pydantic import BaseModel
+
+class HandlerInput(BaseModel):
+    data: Dict[str, Any]
+    headers: Dict[str, str] = {}
+    path_params: Dict[str, str] = {}
+    query_params: Dict[str, str] = {}
+
+class HandlerConfiguration(BaseModel):
+    name: str
+    input_schema: Any  # Pydantic model
+    output_schema: Any  # Pydantic model
+    execute: Callable[[HandlerInput, Dict[str, Any]], Awaitable[Any]]
+
+RuntimeContext = Dict[str, Any]
+```
+
+#### Shared Method Routing Map:
+
+Both implementations use identical method routing logic:
+
+```typescript
+// TypeScript version
+const handlersMap = {
+  // Outlet-level methods (handled directly)
+  ping: (_params, _options) => ({ result: undefined }),
+  "logging/setLevel": (params, _options) => ({
+    result: { _meta: { traceLevel: params.params.level } },
+  }),
+  "notifications/initialized": (_params, _options) => ({ result: undefined }),
+
+  // MCP server-level methods (forwarded to MCP server)
+  initialize: true,
+  "prompts/get": true,
+  "prompts/list": true,
+  "resources/list": true,
+  "resources/templates/list": true,
+  "resources/read": true,
+  "tools/call": true,
+  "tools/list": true,
+  "completion/complete": true,
+
+  // Unsupported methods
+  "notifications/roots/list_changed": false,
+  "resources/unsubscribe": false,
+  "resources/subscribe": false,
+  "sampling/createMessage": false,
+  "roots/list": false,
+};
+```
+
+```python
+# Python version (identical logic)
+handlers_map = {
+    # Outlet-level methods (handled directly)
+    "ping": lambda params, _: {"result": None},
+    "logging/setLevel": lambda params, _: {
+        "result": {
+            "_meta": {"traceLevel": params.get("params", {}).get("level", "info")}
+        }
+    },
+    "notifications/initialized": lambda params, _: {"result": None},
+
+    # MCP server-level methods (forwarded to MCP server)
+    "initialize": True,
+    "prompts/get": True,
+    "prompts/list": True,
+    "resources/list": True,
+    "resources/templates/list": True,
+    "resources/read": True,
+    "tools/call": True,
+    "tools/list": True,
+    "completion/complete": True,
+
+    # Unsupported methods
+    "notifications/roots/list_changed": False,
+    "resources/unsubscribe": False,
+    "resources/subscribe": False,
+    "sampling/createMessage": False,
+    "roots/list": False,
+}
+```
+
+### 3. Concurrency Management (Language-Specific)
+
+The dual language implementations handle concurrency differently due to their runtime characteristics:
+
+#### TypeScript Concurrency Model:
+
+```typescript
+// Single-threaded event loop with natural serialization
+const rpcHandler = async (input, context) => {
+  // No explicit locking needed - JavaScript is single-threaded
+  const tracer = new Tracer(getTraceId(input, "id"));
+  let mcpCaller: McpCaller | undefined = undefined;
+
+  try {
+    // AWS Lambda specific handling
+    if ("callbackWaitsForEmptyEventLoop" in context) {
+      context.callbackWaitsForEmptyEventLoop = true;
+    }
+    // ... rest of handler logic
+  } finally {
+    await mcpCaller?.close();
+  }
+};
+```
+
+#### Python Concurrency Model (With Locking):
+
+```python
+# Module-level asyncio lock for race condition prevention
+import asyncio
+_rpc_lock = asyncio.Lock()
+
+async def rpc_handler(handler_input, context):
+    """RPC handler with explicit locking to prevent race conditions."""
+
+    # Ensure single-threaded execution by acquiring the global lock
+    await _rpc_lock.acquire()
+
+    tracer = Tracer(get_trace_id(handler_input.data, "id"))
+    mcp_caller = None
+
+    try:
+        # AWS-specific handling
+        if "callbackWaitsForEmptyEventLoop" in context:
+            context["callbackWaitsForEmptyEventLoop"] = True
+        # ... rest of handler logic
+    finally:
+        # Always release the lock and close the MCP caller if needed
+        if mcp_caller:
+            await mcp_caller.close()
+
+        _rpc_lock.release()
+```
+
+#### Key Concurrency Differences:
+
+- **TypeScript**: Relies on JavaScript's single-threaded event loop for natural serialization
+- **Python**: Uses explicit `asyncio.Lock()` to prevent race conditions in multi-threaded environments
+- **Resource Management**: Both ensure proper cleanup, but Python requires explicit lock release
+- **AWS Lambda**: Both set `callbackWaitsForEmptyEventLoop = True` for proper event loop handling
+
+### 4. Unified MCP Client Management
+
+Both languages implement identical MCP client management:
+
+#### TypeScript McpCaller:
+
+```typescript
+// Create and use MCP caller
+const mcpCaller = new McpCaller(serverConfig);
+await mcpCaller.connect();
+const result = await mcpCaller.executeMcpCall(request, tracer);
+mcpCaller.close();
+```
+
+#### Python McpCaller (Mirror Implementation):
+
+```python
+# Create and use MCP caller
+mcp_caller = McpCaller(server_config)
+await mcp_caller.connect()
+result = await mcp_caller.execute_mcp_call(request, tracer)
+await mcp_caller.close()
+```
+
+### 5. Schema System (Dual Implementation)
+
+#### TypeScript Schemas (Zod):
+
+```typescript
+// MCP Server Configuration (stdio only)
+const McpServerConfigurationSchema = z.object({
+  protocolVersion: z
+    .enum(SUPPORTED_PROTOCOL_VERSIONS)
+    .default(LATEST_PROTOCOL_VERSION),
+  jsonrpc: z.literal("2.0").default("2.0"),
+  type: z.enum(["stdio"]).default("stdio"),
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  cwd: z.string().optional(),
+  stderr: z.union([IOTypeSchema, z.instanceof(Stream), z.number()]).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  version: z.string().optional(),
+});
+```
+
+#### Python Schemas (Pydantic):
+
+```python
+# MCP Server Configuration (stdio only)
+class McpServerConfiguration(BaseModel):
+    protocol_version: str = Field(default=LATEST_PROTOCOL_VERSION)
+    jsonrpc: str = Field(default="2.0")
+    type: str = Field(default="stdio")
+    command: str = Field(description="Command to execute (stdio only)")
+    args: Optional[List[str]] = Field(
+        default=None, description="Command arguments (stdio only)"
+    )
+    cwd: Optional[str] = Field(default=None, description="Working directory")
+    env: Optional[Dict[str, str]] = Field(default=None, description="Environment variables")
+    version: Optional[str] = Field(default=None, description="Server version")
+```
+
+### 6. Enhanced Testing Framework with Conditional Mocking
+
+The testing framework now supports both languages with shared configuration and improved mocking strategy:
+
+#### Unified Test Scripts:
+
+```json
+{
+  "scripts": {
+    "test:setup": "tsx test/scripts.ts generate test/config.json",
+    "test:delete": "tsx test/scripts.ts delete test/config.json",
+    "test:js": "TEST_CONFIG_PATH=test/config.json node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:python": "cd src/python && TEST_CONFIG_PATH=../../test/config.json PYTHONPATH=. uv run pytest",
+    "test": "npm run test:setup && npm run test:js && npm run test:python && npm run test:delete"
+  }
+}
+```
+
+#### Shared Test Configuration:
+
+Both implementations use the same test configuration from `test/config.ts`:
+
+- **Single Source of Truth**: All test cases defined in TypeScript
+- **JSON Generation**: Configuration converted to JSON for Python consumption
+- **Cross-Language Validation**: Same test cases validate both implementations
+
+#### Mock Configuration Structure:
+
+```typescript
+// Mock behavior types
+export interface MockBehavior {
+  /** Returned value when the mock resolves. */
+  returns?: unknown; // e.g. 42, { tools: [] }, "mockClient"
+  /** Value or message to throw when the mock rejects. */
+  throws?: Record<string, any>;
+  /** Custom implementation to execute instead of the default stub. */
+  implementation?: (...args: unknown[]) => unknown;
+}
+
+export type MocksConfig = {
+  [k: string]: MockBehavior;
+};
+
+// Test case structure
+export interface TestCase {
+  name: string;
+  input: unknown;
+  expected?: unknown;
+  mocks?: MocksConfig; // Per-test mock overrides
+  env?: Record<string, string>; // Per-test environment overrides
+  mockCalls?: MockCallCheck[]; // Verification of mock calls
+}
+```
+
+#### TypeScript Mocking Strategy:
+
+```typescript
+// src/js/tests/setup.ts - Jest module mocking
+export const mockMcpCallHandler = {
+  executeMcpCall: jest.fn(),
+  connect: jest.fn(),
+  close: jest.fn(),
+};
+
+jest.unstable_mockModule("../helpers/McpCaller.ts", () => ({
+  __esModule: true,
+  McpCaller: jest.fn().mockImplementation((config) => ({
+    ...mockMcpCallHandler,
+    config,
+  })),
+}));
+
+// Helper to reset mocks
+export const resetMocks = () => {
+  Object.values(mockMcpCallHandler).forEach((fn) => {
+    if (jest.isMockFunction(fn)) fn.mockReset();
+  });
+};
+```
+
+#### Python Conditional Mocking Strategy:
+
+```python
+# src/python/tests/setup.py - Conditional mock setup
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+# Global mock state
+_mcp_caller_mock = None
+_mock_patcher = None
+_is_mock_active = False
+
+def setup_mcp_caller_mock():
+    """Set up the McpCaller mock using unittest.mock.patch."""
+    global _mcp_caller_mock, _mock_patcher, _is_mock_active
+
+    # Only set up mock if not already active
+    if _is_mock_active:
+        return _mcp_caller_mock
+
+    # Create mock instance
+    _mcp_caller_mock = MagicMock()
+    _mcp_caller_mock.connect = AsyncMock(return_value=None)
+    _mcp_caller_mock.execute_mcp_call = AsyncMock()
+    _mcp_caller_mock.close = AsyncMock(return_value=None)
+
+    # Create the mock class that returns our mock instance
+    mock_class = Mock(return_value=_mcp_caller_mock)
+
+    # Patch the McpCaller class where it's used
+    _mock_patcher = patch("app.handlers.rpc.McpCaller", mock_class)
+    _mock_patcher.start()
+    _is_mock_active = True
+
+    return _mcp_caller_mock
+
+def activate_mock_if_needed(has_mocks: bool):
+    """Conditionally activate mocking based on whether mocks are configured."""
+    if has_mocks and not _is_mock_active:
+        setup_mcp_caller_mock()
+    elif not has_mocks and _is_mock_active:
+        teardown_test_environment()
+
+def reset_mocks():
+    """Reset all mocks - mirrors JavaScript resetMocks function."""
+    if _mcp_caller_mock and _is_mock_active:
+        _mcp_caller_mock.reset_mock()
+        _mcp_caller_mock.connect.reset_mock()
+        _mcp_caller_mock.execute_mcp_call.reset_mock()
+        _mcp_caller_mock.close.reset_mock()
+
+        # Clear any configured behavior
+        _mcp_caller_mock.execute_mcp_call.return_value = None
+        _mcp_caller_mock.execute_mcp_call.side_effect = None
+```
+
+### 7. Enhanced Deployment Commands
+
+The deployment system now supports additional commands:
+
+```bash
+# Core deployment commands
+npm run deploy              # Deploy to cloud (same as deploy deploy)
+npm run package            # Package for deployment
+npm start                  # Start offline server
+npm run debug              # Debug mode
+
+# Test commands
+npm test                   # Run all tests (JS + Python)
+npm run test:js            # Run JavaScript tests only
+npm run test:python        # Run Python tests only
+npm run test:setup         # Generate test configuration
+npm run test:delete        # Clean up test configuration
+
+# Build commands
+npm run watch              # Watch TypeScript files for changes
+```
+
+### 8. Import Patterns (Updated)
+
+#### TypeScript Imports:
+
+```typescript
+// MCP SDK imports
+import {
+  JSONRPCNotification,
+  JSONRPCRequest,
+  JSONRPCRequestSchema,
+  JSONRPCResponseSchema,
+  LATEST_PROTOCOL_VERSION,
+} from "@modelcontextprotocol/sdk/types.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+// Zod (default import pattern)
+import z from "zod";
+
+// UUID for unique identifiers
+import { v4 as uuid } from "uuid";
+
+// Core utilities
+import { Tracer } from "../helpers/tracer.ts";
+import { CustomError, CustomErrorCode, formatError } from "../helpers/error.ts";
+import {
+  McpServerConfigurationSchema,
+  CustomRequestMetaSchema,
+} from "../helpers/schema.ts";
+import { McpCaller } from "../helpers/McpCaller.ts";
+```
+
+#### Python Imports:
+
+```python
+# MCP SDK imports
+from mcp import types
+from mcp.client.stdio import StdioClientTransport
+
+# Standard library
+import asyncio
+import json
+import uuid
+from typing import Dict, Any, Optional, List
+
+# Core utilities (absolute imports from app package)
+from app.helpers.tracer import Tracer
+from app.helpers.error import CustomError, CustomErrorCode, format_error
+from app.helpers.schema import McpServerConfiguration, CustomRequestMeta
+from app.helpers.mcp_caller import McpCaller
+
+# Handler utilities
+from app.handlers.helpers import HandlerInput, RuntimeContext, get_trace_id
+
+# Concurrency management
+import asyncio
+```
+
+### 9. Current Deployment Configuration
+
+The deployment is now configured primarily for Python with Azure as the default provider:
+
+```typescript
+// config.ts - Current deployment configuration
+const CONFIGURATION: MultiCloudConfig = {
+  service: "mcp-outlet",
+  stage: "dev",
+  version: "v1",
+  provider: "azure", // Default provider
+  deploymentType: "serverless",
+
+  functions: [
+    // JavaScript function is currently commented out
+    // {
+    //   runtime: { type: "node", version: "20" },
+    //   name: "mcpOutletJS",
+    //   handler: "rpc",
+    //   source: "src/js/handlers/rpc.ts",
+    // },
+
+    // Python function is active
+    {
+      runtime: { type: "python", version: "3.11" },
+      name: "mcpOutletPython",
+      handler: "rpc",
+      source: "src/python/app/handlers/rpc.py",
+      layers: [uvLayer], // UV Python package manager layer
+    },
+  ],
+};
+```
+
+## Development Rules (Updated)
+
+### Adding a New MCP Method Handler
+
+1. **Add to Both Method Maps**: Add method to `handlersMap` in both:
+   - `src/js/handlers/rpc.ts` (TypeScript)
+   - `src/python/app/handlers/rpc.py` (Python)
+2. **Choose Handler Type**:
+   - **Function**: For outlet-level methods (handled directly)
+   - **true/True**: For MCP server-level methods (forwarded to MCP server)
+   - **false/False**: For unsupported methods
+3. **Add Test Cases**: Add test cases to `test/config.ts` (shared by both implementations)
+4. **Test Both Languages**: Run `npm test` to validate both implementations
+5. **Deploy**: Execute `npm run deploy`
+
+### Method Handler Types (Dual Language)
+
+#### Outlet-Level Methods (Direct Implementation):
+
+```typescript
+// TypeScript
+const handlersMap = {
+  "custom/method": (params, options) => {
+    // Direct implementation
+    return { result: { customData: "value" } };
+  },
+};
+```
+
+```python
+# Python
+handlers_map = {
+    "custom/method": lambda params, options: {
+        # Direct implementation
+        "result": {"customData": "value"}
+    },
+}
+```
+
+#### MCP Server-Level Methods (Forwarded):
+
+```typescript
+// TypeScript
+const handlersMap = {
+  "custom/server/method": true, // Automatically forwarded to MCP server
+};
+```
+
+```python
+# Python
+handlers_map = {
+    "custom/server/method": True,  # Automatically forwarded to MCP server
+}
+```
+
+### Working with Both Implementations
+
+1. **Configuration**: Define MCP server config in request `_meta.server`
+2. **Connection Management**: Both `McpCaller` classes handle connection lifecycle
+3. **Execution**: Use `executeMcpCall`/`execute_mcp_call` for all MCP operations
+4. **Cleanup**: Always call `close()` in finally block (Python uses `await`)
+5. **Cross-Language Consistency**: Maintain identical behavior between implementations
+
+### Testing and Mocking Guidelines
+
+#### Mock Configuration in Test Cases:
+
+```typescript
+// Example test case with mocking
+{
+  name: "prompts/list returns prompts list",
+  mocks: {
+    executeMcpCall: { returns: mockPromptsResult }
+  },
+  input: {
+    data: listPromptsParams,
+  },
+  mockCalls: [
+    {
+      mock: "executeMcpCall",
+      calledWith: [listPromptsParams, ANY_OBJECT],
+    },
+  ],
+  expected: expectedResult(mockPromptsResult),
+}
+```
+
+#### Mock Behavior Types:
+
+- **`returns`**: Set return value (`returns: { tools: [] }`)
+- **`throws`**: Set error to throw (`throws: { message: "Connection failed" }`)
+- **`implementation`**: Set custom function (`implementation: () => ({ custom: "logic" })`)
+- **`"void"`**: Return undefined/None (`returns: "void"`)
+
+#### Mock Method Names:
+
+- **TypeScript**: `executeMcpCall`, `connect`, `close`
+- **Python**: `execute_mcp_call` (auto-mapped from `executeMcpCall`), `connect`, `close`
+
+#### Conditional Mocking Rules:
+
+1. **TypeScript**: Always mocks McpCaller using Jest's `unstable_mockModule`
+2. **Python**: Only activates mocks when test cases specify mock configuration
+3. **No Mocks**: When no mocks are configured, uses real McpCaller implementation
+4. **Reset**: Always reset mocks between test cases
+5. **Cleanup**: Properly teardown mocks after test suite completion
+
+### Adding Test Cases
+
+Add test cases to `test/config.ts` using the declarative approach (validates both languages):
+
+```typescript
+const config: TestSuiteConfig = {
+  env: { NODE_ENV: "debug" }, // Suite-level environment
+  mocks: {
+    connect: { returns: "void" },
+    close: { returns: "void" },
+    executeMcpCall: { returns: mockStartResult }, // Suite-level default
+  },
+  testCases: [
+    {
+      name: "new method test",
+      mocks: {
+        executeMcpCall: { returns: specificMockResult }, // Override suite-level
+      },
+      input: { data: { ...mockRequest, method: "new/method" } },
+      expected: expectedResult(expectedMockResult),
+      mockCalls: [
+        {
+          mock: "executeMcpCall",
+          calledWith: [{ ...mockRequest, method: "new/method" }, ANY_OBJECT],
+        },
+      ],
+    },
+  ],
+};
+```
+
+#### Test Matchers:
+
+- **`ANY_STRING`**: Matches any string
+- **`ANY_OBJECT`**: Matches any object
+- **`ANY_NUMBER`**: Matches any number
+- **`STRING_CONTAINING("text")`**: String containing specific text
+- **`OBJECT_CONTAINING({ key: value })`**: Object containing specific properties
+
+## Code Quality Rules (Updated)
+
+### DO:
+
+- **Maintain Language Parity**: Keep TypeScript and Python implementations identical in behavior
+- Use the single RPC handler pattern in both `src/js/handlers/rpc.ts` and `src/python/app/handlers/rpc.py`
+- Add new methods to both `handlersMap` objects
+- Use `McpCaller`/`McpCaller` classes for all MCP server interactions
+- Always include `_meta.server` configuration in requests
+- Use the `Tracer` class for operation tracing in both languages
+- Handle errors with `CustomError` and `formatError`/`format_error`
+- Use declarative test configuration in `test/config.ts` (shared)
+- Use `import z from "zod"` (default import) for TypeScript Zod
+- Use Pydantic models for Python schema validation
+- Use `import { v4 as uuid } from "uuid"` / `import uuid` for unique identifiers
+- Always call `mcpCaller.close()`/`await mcp_caller.close()` in finally blocks
+- Use stdio transport for MCP server connections
+- Capture console logs during MCP operations
+- Test both implementations with shared test configuration
+- Use simplified handler types (HandlerInput, HandlerConfiguration, RuntimeContext)
+- **Use absolute imports in Python**: Import from `app.helpers.*` and `app.handlers.*`
+- **Use conditional mocking**: Only activate mocks when explicitly configured in test cases
+- **Configure mock behavior**: Use `returns`, `throws`, or `implementation` in mock configuration
+- **Verify mock calls**: Use `mockCalls` array to verify expected method invocations
+- **Reset mocks**: Always reset mock state between test cases
+- **Map method names**: Use `executeMcpCall` in test config, automatically mapped to `execute_mcp_call` in Python
+- **Use async/await in Python**: Python McpCaller methods are async and should be awaited
+- **Implement proper concurrency control in Python**: Use module-level `asyncio.Lock()` to prevent race conditions
+- **Acquire locks before handler execution in Python**: Use `await _rpc_lock.acquire()` at the start of Python RPC handler
+- **Always release locks in finally blocks**: Ensure `_rpc_lock.release()` is called in finally block for Python
+- **Handle AWS Lambda event loop properly**: Set `callbackWaitsForEmptyEventLoop = True` in both languages
+- **Use natural serialization in TypeScript**: Rely on JavaScript's single-threaded event loop, no explicit locking needed
+
+### DON'T:
+
+- Don't break language parity - both implementations must behave identically
+- Don't create separate handler files - use the single RPC handler in each language
+- Don't bypass the `McpCaller` classes for MCP operations
+- Don't forget to close MCP connections in either language
+- Don't hardcode MCP server configurations
+- Don't skip tracing for operations
+- Don't use multiple transport types - stick to stdio
+- Don't create custom error classes - use `CustomError`
+- Don't write individual test files - use declarative configuration
+- Don't use named imports for Zod - use default import
+- Don't ignore MCP protocol errors or timeouts
+- Don't maintain persistent connections without proper cleanup
+- Don't test only one language - always test both
+- **Don't use relative imports in Python**: Always use absolute imports from `app.*`
+- **Don't activate mocks unnecessarily**: Only use mocks when test cases require them
+- **Don't hardcode mock returns**: Use proper mock configuration structure
+- **Don't skip mock verification**: Always verify expected mock calls in test cases
+- **Don't forget method name mapping**: Remember `executeMcpCall` → `execute_mcp_call` conversion
+- **Don't forget await in Python**: Python async methods must be awaited
+- **Don't skip lock acquisition in Python**: Always acquire the global lock before executing Python RPC handler
+- **Don't forget to release locks**: Missing `_rpc_lock.release()` in finally block will cause deadlocks
+- **Don't add locking to TypeScript**: JavaScript's event loop provides natural serialization - explicit locks not needed
+- **Don't use blocking operations while holding locks**: Keep critical sections minimal to avoid performance issues
+- **Don't release locks before cleanup**: Ensure MCP connections are closed before releasing the lock
+
+### Mock Testing Patterns:
+
+#### Success Case with Mock:
+
+```typescript
+{
+  name: "tools/list returns tools list",
+  mocks: { executeMcpCall: { returns: mockToolsResult } },
+  input: { data: { ...mockRequest, method: "tools/list" } },
+  mockCalls: [
+    {
+      mock: "executeMcpCall",
+      calledWith: [{ ...mockRequest, method: "tools/list" }, ANY_OBJECT],
+    },
+  ],
+  expected: expectedResult(mockToolsResult),
+}
+```
+
+#### Error Case with Mock:
+
+```typescript
+{
+  name: "MCP method execution failure",
+  mocks: {
+    executeMcpCall: { throws: { message: "MCP server error" } },
+  },
+  input: {
+    data: {
+      ...mockRequest,
+      method: "prompts/get",
+      params: { ...mockRequest.params, name: "test-prompt" },
+    },
+  },
+  expected: expectedError(
+    ErrorCode.InternalError,
+    "MCP server error",
+    undefined,
+    true
+  ),
+}
+```
+
+#### Connection Failure Mock:
+
+```typescript
+{
+  name: "MCP client creation failure",
+  mocks: {
+    connect: { throws: { message: "Failed to create MCP client" } },
+  },
+  input: { data: { ...mockRequest, method: "prompts/list" } },
+  expected: expectedError(
+    ErrorCode.InternalError,
+    "Failed to create MCP client",
+    undefined,
+    true
+  ),
+}
+```
+
+## Request Flow (Dual Language)
+
+1. **JSON-RPC Request** → `rpc` handler (TypeScript or Python)
+2. **Input Validation** → Validate `_meta.server` configuration
+3. **Method Routing** → Check `handlersMap` for method type
+4. **Direct Handling** → If function, execute directly
+5. **MCP Forwarding** → If true, forward to MCP server via `McpCaller`
+6. **Response Generation** → Format response with trace and metadata
+7. **Cleanup** → Close MCP connections and finalize trace
+
+## Project Focus (Updated)
+
+**MCP Outlet** provides a **universal MCP runtime** with **dual language support**:
+
+### Core Features:
+
+1. **Dual Language Support**: Identical TypeScript and Python implementations
+2. **Single Entry Point**: One RPC handler routes all requests in each language
+3. **Automatic MCP Management**: `McpCaller` handles all MCP server interactions
+4. **Flexible Method Routing**: Support for outlet-level, server-level, and unsupported methods
+5. **Comprehensive Tracing**: Full operation tracing with span management
+6. **Console Log Capture**: Automatic capture of MCP server output
+7. **Error Isolation**: Proper error handling and connection cleanup
+8. **Unified Testing**: Shared test configuration validates both implementations
+9. **Conditional Mocking**: Smart mocking system that only activates when needed
+10. **Enhanced Commands**: Extended deployment and utility commands
+11. **Multicloud Deployment**: Deploy to AWS, Azure, or GCP
+12. **Python-First Deployment**: Current configuration prioritizes Python runtime
+13. **Concurrency Management**: Language-specific concurrency control (natural serialization in TypeScript, explicit locking in Python)
+
+### Use Cases:
+
+1. **Cross-Language MCP Runtime**: Support both Node.js and Python environments
+2. **MCP Server Proxy**: Forward requests to any MCP server safely
+3. **Development & Testing**: Test MCP servers with full tracing in preferred language
+4. **Integration Platform**: Single interface for multiple MCP servers
+5. **Security Sandbox**: Run untrusted MCP servers with isolation
+6. **Monitoring & Debugging**: Comprehensive logging and tracing
+
+The system is designed as a universal MCP runtime that can safely execute any MCP server configuration through a single, simplified interface with comprehensive monitoring and error handling, available in both TypeScript and Python with identical behavior and capabilities.
+
+### Current Implementation Status:
+
+- **Python Implementation**: Fully active and deployed by default
+  - **Performance**: Optimized to achieve **0.5s response time** (excluding Lambda cold start)
+  - **Runtime**: Python 3.11 with UV package manager for fast dependency resolution
+- **TypeScript Implementation**: Available but currently commented out in deployment
+- **Testing**: Both implementations tested with shared configuration
+- **Deployment**: Azure-first with Python 3.11 runtime and UV package manager
+- **Build System**: TypeScript compilation to `dist/` directories, Python packaging via `pyproject.toml`
+
+## Performance Optimization
+
+### Python Runtime Performance
+
+The Python implementation has been extensively optimized to achieve **sub-500ms response times** (excluding cold start):
+
+#### Key Optimizations:
+
+1. **Pre-Import Heavy Dependencies**: Import heavy libraries (pandas, numpy, matplotlib, requests) at module level in `rpc.py`
+
+   ```python
+   # Pre-import common and heavy dependencies for keeping runtime fast
+   import pandas
+   import requests
+   import numpy
+   import matplotlib.pyplot
+   ```
+
+2. **UV Package Manager Integration**:
+
+   - Fast package installation with UV (`uv pip install --prefix`)
+   - Strategic caching in `/mnt/cache` or `UV_CACHE_DIR`
+   - Avoid bytecode compilation with `UV_COMPILE_BYTECODE=0`
+   - Direct installation without virtual env using `UV_BREAK_SYSTEM_PACKAGES=1`
+
+3. **Threaded MCP Server with OS Pipes**:
+
+   - Use `SimpleThreadedMcpServer` with real OS pipes instead of subprocess
+   - Direct stdin/stdout communication via `os.pipe()`
+   - Minimal overhead for inter-process communication
+
+4. **Optimized Import Path Management**:
+
+   - Strategic `sys.path` manipulation in `setup_uv_environment()`
+   - Prioritize UV cache directory over system packages
+   - Reuse existing Python environment packages
+
+5. **Efficient JSON and Type Conversion**:
+
+   - Custom `_convert_to_dict()` function for fast object serialization
+   - Skip None values to reduce payload size
+   - Direct attribute access instead of reflection
+
+6. **Smart Package Detection**:
+
+   - Check if packages are already installed with `importlib.metadata`
+   - Skip unnecessary reinstallation
+   - Fast metadata retrieval avoiding subprocess calls
+
+7. **Async/Await Optimization**:
+
+   - Use `run_in_executor` for blocking operations
+   - Proper asyncio event loop management in threads
+   - Minimal async overhead for synchronous operations
+
+8. **Concurrency Control and Race Condition Prevention**:
+   - Module-level `asyncio.Lock()` for serializing RPC handler execution
+   - Prevents race conditions in multi-threaded environments
+   - Ensures safe access to shared resources (MCP connections, UV cache)
+   - Proper lock acquisition/release pattern in try/finally blocks
+
+#### Performance Metrics:
+
+- **Target Response Time**: < 0.5s (excluding cold start)
+- **Cold Start Time**: Varies by cloud provider (AWS Lambda: ~1-2s, Azure Functions: ~1-3s)
+- **Memory Usage**: Optimized for minimal memory footprint
+- **Concurrent Requests**: Efficient handling of multiple simultaneous MCP calls
+
+#### Performance Best Practices:
+
+1. **Pre-Import Heavy Libraries**: Import commonly used heavy libraries at module level:
+
+   ```python
+   # At top of rpc.py
+   import pandas
+   import numpy
+   import matplotlib.pyplot
+   import requests
+   ```
+
+2. **Use UV for Dynamic Package Management**:
+
+   ```python
+   env = setup_uv_environment()  # Configure UV paths
+   subprocess.run(["uv", "pip", "install", "--prefix", cache_dir, package])
+   ```
+
+3. **Implement Threaded Servers with OS Pipes**:
+
+   ```python
+   # Use os.pipe() for efficient IPC
+   self.stdin_read_fd, self.stdin_write_fd = os.pipe()
+   self.stdout_read_fd, self.stdout_write_fd = os.pipe()
+   ```
+
+4. **Optimize Type Conversions**:
+
+   ```python
+   # Use custom converter that skips None values
+   def _convert_to_dict(obj):
+       if obj is None:
+           return None
+       # ... handle each type efficiently
+   ```
+
+5. **Cache Package Installations**:
+
+   - Check if package exists with `importlib.metadata` before installing
+   - Use UV cache directory for persistent package storage
+   - Configure `UV_CACHE_DIR` environment variable
+
+6. **Minimize Process Spawning**:
+
+   - Use threading instead of subprocess where possible
+   - Reuse existing Python interpreter with thread-based servers
+   - Avoid shell=True in subprocess calls
+
+7. **Implement Proper Concurrency Control**:
+   - Use module-level asyncio lock to prevent race conditions
+   - Serialize RPC handler execution for thread safety
+   - Keep critical sections minimal for optimal performance
+
+#### Implementation-Specific Rules:
+
+### DO (Performance):
+
+- **Pre-import heavy dependencies** at module level to avoid runtime import cost
+- **Use UV package manager** with caching for dynamic package installation
+- **Implement threaded servers** with OS pipes for MCP communication
+- **Check package existence** before installation with `importlib.metadata`
+- **Use `_convert_to_dict()`** for efficient object serialization
+- **Configure UV environment variables** for optimal performance:
+  - `UV_CACHE_DIR`: Set cache directory
+  - `UV_COMPILE_BYTECODE=0`: Disable bytecode compilation
+  - `UV_LINK_MODE=copy`: Use copy instead of symlinks
+  - `UV_NO_SYNC=1`: Skip lock file sync
+- **Use `run_in_executor`** for blocking operations in async context
+- **Prioritize UV cache** in PYTHONPATH over system packages
+- **Implement module-level locking** with `asyncio.Lock()` to prevent race conditions
+- **Keep critical sections minimal** while holding locks for optimal performance
+- **Use proper lock acquisition/release pattern** with try/finally blocks
+
+### DON'T (Performance):
+
+- **Don't use subprocess** for MCP servers - use threading with OS pipes
+- **Don't skip pre-imports** of heavy libraries in hot paths
+- **Don't parse JSON multiple times** - use efficient single-pass parsing
+- **Don't reinstall packages** that are already available
+- **Don't use shell=True** in subprocess calls
+- **Don't create new event loops** unnecessarily - reuse existing ones
+- **Don't serialize None values** in JSON responses
+- **Don't use costly subprocess calls** for package metadata - use importlib
+- **Don't skip concurrency control** in multi-threaded Python environments
+- **Don't hold locks longer than necessary** - keep critical sections minimal
+- **Don't forget lock release** in exception scenarios - use finally blocks
+
+### Performance Code Patterns:
+
+#### UV Environment Setup:
+
+```python
+def setup_uv_environment():
+    env = os.environ.copy()
+    cache_dir = env.get("UV_CACHE_DIR", "/mnt/cache")
+    # ... configure paths
+    env.update({
+        "UV_CACHE_DIR": cache_dir,
+        "UV_COMPILE_BYTECODE": "0",
+        "UV_LINK_MODE": "copy",
+        "UV_NO_SYNC": "1",
+        "UV_NO_PROJECT": "1",
+        "UV_BREAK_SYSTEM_PACKAGES": "1",
+        "PYTHONPATH": ":".join(python_paths)
+    })
+    return env
+```
+
+#### Threaded Server Pattern:
+
+```python
+class SimpleThreadedMcpServer:
+    def __init__(self, module_path: str, function_name: str):
+        # Use OS pipes for efficient IPC
+        self.stdin_read_fd, self.stdin_write_fd = os.pipe()
+        self.stdout_read_fd, self.stdout_write_fd = os.pipe()
+        # Convert to file objects
+        self.stdin_read_file = os.fdopen(self.stdin_read_fd, "r")
+        # ... setup pipes
+```
+
+#### Package Detection Pattern:
+
+```python
+def _is_package_installed(pkg: str) -> bool:
+    try:
+        import importlib.metadata
+        importlib.metadata.version(pkg)
+        return True
+    except importlib.metadata.PackageNotFoundError:
+        return False
+```
+
+#### Concurrency Control Pattern:
+
+```python
+# Module-level lock for race condition prevention
+import asyncio
+_rpc_lock = asyncio.Lock()
+
+async def rpc_handler(handler_input, context):
+    """RPC handler with proper concurrency control."""
+
+    # Acquire lock to ensure serialized execution
+    await _rpc_lock.acquire()
+
+    tracer = Tracer(get_trace_id(handler_input.data, "id"))
+    mcp_caller = None
+
+    try:
+        # Handler logic here
+        # ... processing ...
+        pass
+    finally:
+        # Always cleanup resources and release lock
+        if mcp_caller:
+            await mcp_caller.close()
+
+        # Release lock to allow next request
+        _rpc_lock.release()
+```
