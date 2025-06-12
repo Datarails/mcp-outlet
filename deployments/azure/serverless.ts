@@ -84,17 +84,15 @@ export class AzureConfigNormalizer {
   }
 
   // Normalize generic config to Azure BaseConfig
-  normalizeBaseConfig(stackId: string): BaseConfig {
+  normalizeBaseConfig(): BaseConfig {
     return {
+      ...this.config.cloud,
       resourceGroup:
         (this.config.cloud.resourceGroup as string) ||
         `${this.config.service}-${this.config.stage}-rg`,
       service: this.config.service,
       stage: this.config.stage,
       version: this.config.version,
-      region: this.config.cloud.region,
-      subscriptionId: this.config.cloud.accountId || "",
-      tenantId: this.config.cloud.credentials?.profile || "",
       containerName: "deployments",
       storageAccountName: `${this.config.service}${this.config.stage}storage`
         .replace(/-/g, "")
@@ -104,12 +102,13 @@ export class AzureConfigNormalizer {
         .replace(/-/g, "")
         .toLowerCase()
         .substring(0, 24),
-      shareStorageName: `packages`,
     };
   }
 
   // Normalize Function App configuration
   normalizeFunctionAppConfigs(): FunctionAppConfig[] {
+    const skuName = this.config.functions[0].skuName as string;
+    const skuTier = this.config.functions[0].skuTier as string;
     return this.config.functions.map((func): FunctionAppConfig => {
       const fullRuntime = `${func.runtime.type}${func.runtime.version}`;
       const runtime = RUNTIME_MAPPING[fullRuntime];
@@ -118,20 +117,14 @@ export class AzureConfigNormalizer {
       }
 
       const functionAppConfig: FunctionAppConfig = {
-        functionAppName: func.name,
-        codePath: func.source,
-        handler: func.handler,
         runtimeStack: runtime.stack,
         runtimeVersion: runtime.version,
-        memorySize: func.memorySize,
-        timeout: func.timeout,
-        environment: func.environment,
+        // this must run on linux for mounting shared cache
         osType: AZURE_DEFAULTS.functionApp.osType,
-        skuName: AZURE_DEFAULTS.functionApp.skuName,
-        skuTier: AZURE_DEFAULTS.functionApp.skuTier,
+        skuName: skuName || AZURE_DEFAULTS.functionApp.skuName,
+        skuTier: skuTier || AZURE_DEFAULTS.functionApp.skuTier,
         logLevel: func.logLevel || AZURE_DEFAULTS.functionApp.logLevel,
         events: this.normalizeEventsConfig(func.name, func.events),
-        permissions: this.normalizePermissions(func.permissions),
       };
 
       return functionAppConfig;
@@ -201,30 +194,6 @@ export class AzureConfigNormalizer {
       }
     });
   }
-
-  private normalizePermissions(
-    permissions: MultiCloudConfig["functions"][number]["permissions"]
-  ):
-    | {
-        storageAccounts?: string[];
-        customRoles?: string[];
-        includeLogging?: boolean;
-        includeMonitoring?: boolean;
-      }
-    | undefined {
-    if (!permissions) return undefined;
-
-    return {
-      storageAccounts: permissions.storageAccess || [],
-      customRoles: permissions.customPolicies?.map((p) => p.name) || [],
-      includeLogging: permissions.logging !== false,
-      includeMonitoring: permissions.monitoring !== false,
-    };
-  }
-
-  getAdditionalTags(): Record<string, string> | undefined {
-    return this.config.deployment?.tags;
-  }
 }
 
 export async function deployAzureServerless(
@@ -234,9 +203,8 @@ export async function deployAzureServerless(
   console.log("🚀 Starting Azure serverless deployment with Bicep...");
 
   const normalizer = new AzureConfigNormalizer(config);
-  const baseConfig = normalizer.normalizeBaseConfig(stackId);
+  const baseConfig = normalizer.normalizeBaseConfig();
   const allFunctionAppConfigs = normalizer.normalizeFunctionAppConfigs();
-  const additionalTags = normalizer.getAdditionalTags();
 
   // Group functions by runtime
   const functionsByRuntime = allFunctionAppConfigs.reduce((acc, func) => {
@@ -258,7 +226,7 @@ export async function deployAzureServerless(
   }
 
   const deploymentStacks: string[] = [];
-  const stackData = await deployStack(baseConfig, additionalTags);
+  const stackData = await deployStack(baseConfig, {});
 
   // Deploy each runtime separately
   for (const runtime of runtimes) {
@@ -269,7 +237,7 @@ export async function deployAzureServerless(
 
     const azureConfig: BicepDeploymentConfig = {
       functionApps: runtimeFunctions,
-      additionalTags,
+      additionalTags: {},
     };
 
     // Generate Bicep template for this runtime

@@ -118,6 +118,7 @@ export class LocalDevServer {
     }
 
     process.env["TEMP_FOLDER"] = this.config.tempFolder;
+    process.env["CACHE_DIR"] = this.config.tempFolder + "/cache";
     return {
       execute: handler.execute.bind(handler),
     };
@@ -161,6 +162,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Dict, Any
 os.environ["TEMP_FOLDER"] = "${this.config.tempFolder}"
+os.environ["CACHE_DIR"] = "${this.config.tempFolder + "/cache"}"
 
 # Set up Python project directory
 source_path = r"${sourcePath}"

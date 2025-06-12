@@ -64,16 +64,29 @@ const CONFIGURATION: MultiCloudConfig = {
   // Function configuration (includes runtime, events, permissions)
   functions: [
     {
+      name: "mcpOutletJS",
+      handler: "rpc",
+      source: "src/js/handlers/rpc.ts",
       runtime: {
         type: "node",
         version: "20",
       },
-      name: "mcpOutletJS",
-      handler: "rpc",
-      source: "src/js/handlers/rpc.ts",
-      memorySize: 512,
-      timeout: 29,
-      concurrency: 50,
+      // this is used for the azure functions app sku
+
+      // this is used for the azure functions app sku
+      skuName: process.env.NODE_SKU_NAME,
+      skuTier: process.env.NODE_SKU_TIER,
+
+      // this is used for aws lambda
+      memorySize: process.env.NODE_MEMORY_SIZE,
+      timeout: process.env.NODE_TIMEOUT,
+
+      // this is used for package data there is optional with default value
+      cache: {
+        size: +process.env.NODE_CACHE_SIZE,
+        mountPath: process.env.NODE_CACHE_MOUNT_PATH,
+      },
+
       events: [
         {
           type: "http",
@@ -96,10 +109,25 @@ const CONFIGURATION: MultiCloudConfig = {
         type: "python",
         version: "3.11",
       },
+      // this is used for package data there is optional with default value
+      cache: {
+        size: process.env.PYTHON_CACHE_SIZE
+          ? +process.env.PYTHON_CACHE_SIZE
+          : undefined,
+        mountPath: process.env.PYTHON_CACHE_MOUNT_PATH,
+      },
+
+      // this is used for the azure functions app sku
+      skuName: process.env.PYTHON_SKU_NAME,
+      skuTier: process.env.PYTHON_SKU_TIER,
+
+      // this is used for aws lambda
+      memorySize: process.env.PYTHON_MEMORY_SIZE,
+      timeout: process.env.PYTHON_TIMEOUT,
+
       name: "mcpOutletPython",
       handler: "rpc",
       source: "src/python/app/handlers/rpc.py",
-      concurrency: 50,
       layers: [uvLayer],
       events: [
         {
@@ -119,15 +147,6 @@ const CONFIGURATION: MultiCloudConfig = {
       ],
     },
   ],
-
-  // Deployment configuration
-  deployment: {
-    tags: {
-      Service: "mcp-outlet",
-      Stage: "dev",
-      Environment: "development",
-    },
-  },
 };
 
 export default CONFIGURATION;

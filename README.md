@@ -1,26 +1,30 @@
 # MCP Outlet - Universal MCP Runtime Orchestrator
 
-## The Concept
+> **Production-Ready**: Sub-500ms MCP server proxy with Azure deployment
 
-**MCP Outlet** is a high-performance universal runtime orchestrator for Model Context Protocol (MCP) servers that acts like an electrical outlet for MCP connections. Just as an electrical outlet provides safe, regulated power to any compatible device without requiring custom wiring for each appliance, MCP Outlet provides a secure, standardized runtime environment for any compatible MCP server without requiring specific deployment or risk management for each individual server. The Python implementation achieves **sub-500ms response times**, making it suitable for production workloads with strict latency requirements.
+MCP Outlet acts like an electrical outlet for MCP servers - providing a safe, universal runtime that accepts any MCP server configuration without requiring specific deployment for each server.
 
-### The "Outlet" Analogy
+## ✅ What Works (Production Ready)
 
-The name reflects the core philosophy:
+- **Python Implementation**: Optimized runtime with sub-500ms response times
+- **Azure Deployment**: Single-command deployment to Azure Functions
+- **MCP Server Proxy**: Forward requests to any MCP server safely
+- **Performance Optimization**: UV package manager, pre-imports, threaded servers
+- **Concurrency Control**: Race condition prevention with asyncio locks
+- **Full Tracing**: Comprehensive operation monitoring and console capture
 
-- **Universal Compatibility**: Accept any MCP server configuration, just like outlets accept any compatible plug
-- **Safe Execution**: Provide regulated, secure runtime execution, just like outlets provide safe electrical power
-- **Risk Isolation**: Protect your infrastructure from MCP server failures, just like outlets protect your home's wiring
-- **Plug-and-Play**: No redeployment needed for new MCP servers, just like no rewiring needed for new devices
-- **Multiple Connections**: One outlet instance can serve multiple MCP servers through configuration
+## ⚠️ Available (Not Optimized)
 
-## Dual Language Architecture
+- **TypeScript Implementation**: Basic functionality exists, not production-ready
+- **Testing Framework**: Maintained but not current focus
 
-MCP Outlet implements identical functionality in both **TypeScript** and **Python**, providing true language choice without compromising features or behavior.
+## ❌ TBD (Not Working)
 
-### Mirror Implementation Philosophy
+- **AWS Deployment**: Implementation exists but deployment fails
+- **GCP Deployment**: Framework exists but incomplete
+- **JS Function Optimization**: Major performance work needed
 
-Both implementations share:
+## Quick Start
 
 - **Identical APIs**: Same method signatures and behavior patterns
 - **Shared Test Configuration**: Single source of truth for validation
@@ -109,7 +113,7 @@ This moves the import cost to the cold start phase rather than request handling.
 
 UV provides lightning-fast package installation and caching:
 
-- **Strategic Caching**: Packages cached in `/mnt/cache` or `UV_CACHE_DIR`
+- **Strategic Caching**: Packages cached in `/mnt/cache` or `CACHE_DIR`
 - **No Bytecode Compilation**: `UV_COMPILE_BYTECODE=0` saves time
 - **Direct Installation**: `UV_BREAK_SYSTEM_PACKAGES=1` avoids virtual env overhead
 - **Optimized Environment**: Custom `PYTHONPATH` prioritizes UV cache
@@ -339,161 +343,161 @@ const testSuite: TestSuiteConfig = {
 ### Cross-Language Test Execution
 
 ```bash
-# Run both implementations with shared configuration
-npm test                    # TypeScript + Python
-npm run test:js            # TypeScript only
-npm run test:python        # Python only
+# Clone and setup
+git clone https://github.com/your-org/mcp-outlet.git
+cd mcp-outlet
+npm install
+
+# Deploy to Azure (uses Python implementation)
+npm run deploy
 ```
 
-The test framework automatically:
-
-1. Generates JSON configuration from TypeScript definitions
-2. Executes TypeScript tests with Jest
-3. Executes Python tests with pytest
-4. Validates identical behavior across languages
-5. Cleans up generated configuration
-
-## Serverless Architecture Concepts
-
-MCP Outlet is designed around serverless principles that enable scalable, cost-effective MCP server orchestration.
-
-### Shared Memory Architecture
-
-**Function Isolation with Shared State:**
-
-- Each MCP server request runs in an isolated serverless function
-- Tracing and configuration data shared through cloud-native storage
-- No persistent server state eliminates scaling bottlenecks
-- Automatic cleanup prevents resource leaks
-
-**Memory Management:**
-
-- **Cold Start Optimization**: Minimal initialization overhead through pre-imports
-- **Sub-500ms Warm Performance**: Highly optimized Python runtime for production use
-- **Connection Pooling**: Reuse MCP server connections within function lifecycle
-- **Cleanup Automation**: Guaranteed resource cleanup on function termination
-- **Memory Limits**: Configurable memory allocation per function
-
-### Multi-Cloud Serverless Strategy
-
-**Cloud-Agnostic Design:**
-
-- Abstract serverless primitives (functions, storage, networking)
-- Provider-specific optimizations without vendor lock-in
-- Unified deployment interface across AWS Lambda, Azure Functions, GCP Cloud Functions
-- Environment-specific configurations handled automatically
-
-**Serverless Benefits for MCP:**
-
-- **Zero Infrastructure Management**: No servers to maintain or scale
-- **Automatic Scaling**: Handle variable MCP server loads
-- **Cost Efficiency**: Pay only for actual MCP server execution time
-- **Fault Isolation**: MCP server failures don't affect other operations
-- **Geographic Distribution**: Deploy closer to MCP server sources
-
-### Function Lifecycle Management
-
-**Request-Response Cycle:**
-
-1. **Function Invocation**: Serverless function receives JSON-RPC request
-2. **MCP Server Spawning**: Create stdio-based MCP server process
-3. **Operation Execution**: Forward method calls with full tracing
-4. **Resource Cleanup**: Terminate MCP server and close connections
-5. **Response Return**: Deliver results with trace metadata
-
-**Connection Strategy:**
-
-- **Per-Request Connections**: New MCP server instance per request
-- **Connection Reuse**: Within single function execution, reuse connections
-- **Timeout Management**: Configurable timeouts prevent hanging operations
-- **Error Recovery**: Automatic retry and fallback mechanisms
-
-## Offline Development
-
-MCP Outlet provides a complete offline development environment that mirrors the serverless execution model.
-
-### Local Runtime Simulation
-
-**Express-Based Server:**
-
-- HTTP endpoints that simulate serverless function invocation
-- Same request/response format as cloud deployment
-- Full tracing and console capture in development
-- Hot reload for rapid iteration
-
-**Development Features:**
-
-- **Real MCP Server Testing**: Connect to actual MCP servers locally
-- **Debug Mode**: Enhanced logging and error reporting
-- **Configuration Validation**: Test MCP server configs before deployment
-- **Performance Profiling**: Local performance analysis and optimization
-
-### Development Workflow
+### 2. Local Development
 
 ```bash
-npm start                   # Start offline development server
-# Server runs on http://localhost:3000
-# Same JSON-RPC interface as serverless deployment
+# Start offline development server
+npm start
+# Server runs on http://localhost:3001
 ```
 
-The offline server provides identical behavior to the deployed serverless functions, allowing complete development and testing without cloud resources.
+### 3. Use MCP Outlet
 
-## Key Architectural Decisions
+```bash
+# Send JSON-RPC request to deployed endpoint
+curl -X POST https://your-azure-function-url/mcpOutletPython \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "1",
+    "method": "tools/list",
+    "_meta": {
+      "server": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-everything"]
+      }
+    }
+  }'
+```
 
-### Single Handler Pattern
+## Architecture
 
-Both languages implement a single RPC handler that routes all MCP methods:
+**Single Entry Point**: One RPC handler routes all MCP methods
 
-- **Simplified Deployment**: One function handles all MCP operations
-- **Consistent Routing**: Same method routing logic across languages
-- **Easier Maintenance**: Single point of control for method handling
-- **Performance**: Reduced cold start overhead with fewer functions
+```python
+# Add new MCP method in src/python/app/handlers/rpc.py
+handlers_map = {
+    "your/method": True,  # Forward to MCP server
+    "outlet/method": lambda params, _: {"result": "direct"},  # Handle directly
+    "unsupported/method": False,  # Reject
+}
+```
 
-### Protocol Abstraction
+**Deployment Flow**:
 
-MCP Outlet abstracts MCP protocol details:
+1. Python code → Azure Functions (production)
+2. UV package manager → Fast dependency resolution
+3. OS pipes → Efficient MCP server communication
+4. Asyncio locks → Race condition prevention
 
-- **Transport Independence**: Currently stdio, extensible to other transports
-- **Version Management**: Handle multiple MCP protocol versions
-- **Error Standardization**: Consistent error formatting across all operations
-- **Method Classification**: Automatic routing between outlet and server methods
+## Configuration
 
-### Configuration-Driven Execution
+### Environment Variables
 
-MCP servers are configured through request metadata rather than deployment configuration:
+```bash
+# Azure deployment (optional - has defaults)
+RESOURCE_GROUP=mcp-outlet-rg
+REGION=East US
+PYTHON_SKU_NAME=EP1
+PYTHON_SKU_TIER=ElasticPremium
+```
 
-- **Dynamic Server Loading**: No redeployment needed for new MCP servers
-- **Per-Request Configuration**: Different MCP servers per request
-- **Security Isolation**: Each MCP server runs in isolation
-- **Development Flexibility**: Test different configurations instantly
+### MCP Server Configuration
 
-### Language-Specific Concurrency Control
+Pass MCP server config in request `_meta.server`:
 
-Each implementation uses optimal concurrency patterns for its runtime environment:
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/list",
+  "_meta": {
+    "server": {
+      "command": "python",
+      "args": ["-m", "your_mcp_server"],
+      "cwd": "/path/to/server",
+      "env": { "API_KEY": "value" }
+    }
+  }
+}
+```
 
-- **TypeScript**: Leverages JavaScript's single-threaded event loop for natural serialization
-- **Python**: Implements explicit asyncio locking to prevent race conditions in multi-threaded environments
-- **Identical Behavior**: Both approaches ensure the same request produces the same result
-- **Runtime Optimization**: Each language uses its most efficient concurrency model
+## Performance
 
-## Security Model
+**Python Implementation (Production)**:
 
-**Process Isolation**: Each MCP server runs in a separate process with controlled stdio
-**Resource Limits**: Configurable memory and timeout limits per execution
-**Network Isolation**: No network access unless explicitly configured
-**Input Validation**: Comprehensive schema validation for all inputs
-**Error Containment**: MCP server failures don't affect the runtime system
+- **Response Time**: < 500ms (warm execution)
+- **Cold Start**: 1-3 seconds
+- **Optimizations**: Pre-imports, UV caching, threaded servers, asyncio locks
 
-## Design Philosophy
+**Key Features**:
 
-MCP Outlet embodies several key principles:
+- Pre-imported heavy libraries (pandas, numpy, matplotlib, requests)
+- UV package manager with strategic caching
+- OS pipe communication instead of subprocess
+- Module-level asyncio locks prevent race conditions
 
-1. **Universal Compatibility**: Accept any valid MCP server configuration
-2. **Language Choice Freedom**: Identical functionality in TypeScript and Python
-3. **Serverless-First**: Designed for cloud-native, event-driven execution
-4. **Developer Experience**: Comprehensive tracing, testing, and offline development
-5. **Production Ready**: Error handling, resource management, and monitoring built-in
-6. **High Performance**: Optimized for sub-500ms response times in production
-7. **Runtime-Optimized Concurrency**: Each language uses its most efficient concurrency model while maintaining identical behavior
+## Development
 
-The result is a system that makes MCP server integration as simple as plugging a device into an electrical outlet - safe, universal, and reliable.
+### Add New MCP Method
+
+1. **Add to handlers map** in `src/python/app/handlers/rpc.py`:
+
+   ```python
+   handlers_map = {
+       "new/method": True,  # Forward to MCP server
+   }
+   ```
+
+2. **Deploy**:
+   ```bash
+   npm run deploy
+   ```
+
+### Project Structure
+
+```
+mcp-outlet/
+├── src/python/          # Python implementation (PRODUCTION)
+│   └── app/handlers/rpc.py  # Main RPC handler
+├── src/js/              # TypeScript implementation (TBD)
+├── config.ts            # Deployment configuration
+└── deployments/azure/   # Azure deployment scripts
+```
+
+## Commands
+
+### ✅ Working Commands
+
+```bash
+npm run deploy          # Deploy to Azure (Python)
+npm start              # Local development server
+npm run package        # Package for deployment
+npm run watch          # Watch TypeScript changes
+```
+
+### ❌ TBD Commands
+
+```bash
+# These don't work yet:
+# npm run deploy:aws    # AWS deployment (fails)
+# npm run deploy:gcp    # GCP deployment (not implemented)
+```
+
+## Current Reality
+
+**MCP Outlet is a Python-first Azure MCP runtime** that safely executes any MCP server configuration through a single, optimized interface with comprehensive monitoring and sub-500ms performance.
+
+- **Use for Production**: Python + Azure deployment
+- **TypeScript Support**: Available but not optimized
+- **Multi-Cloud**: Only Azure works currently
+
+Perfect for safely running untrusted MCP servers, prototyping MCP integrations, and building production MCP-powered applications.

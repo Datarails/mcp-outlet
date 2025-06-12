@@ -189,7 +189,6 @@ export class AWSConfigNormalizer {
         },
         deployOptions: {
           stageName: this.config.stage,
-          throttle: this.config.deployment?.throttle,
         },
       };
     });
@@ -362,6 +361,7 @@ export class AWSServerlessDeployer extends MultiCloudDeployer {
         ...func.environment,
         PROVIDER: this.config.provider,
         TEMP_FOLDER: this.config.tempFolder,
+        CACHE_DIR: func.cache.mountPath,
       };
     });
     await deployAWSServerless(stackId, this.config);

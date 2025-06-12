@@ -34,6 +34,34 @@ const LayerSchema = z.object({
   type: z.enum(["tar", "zip"]),
 });
 
+const RuntimeSchema = z.object({
+  type: z.string().describe("e.g., 'node', 'python'"),
+  version: z.string().describe("e.g., '20.x', '3.10'"),
+});
+
+const FunctionSchema = z
+  .object({
+    cache: z.object({
+      size: z.number().default(1024),
+      mountPath: z.string().default("/mnt/cache"),
+    }),
+    runtime: RuntimeSchema,
+    name: z.string(),
+    handler: z.string(),
+    source: z.string(), // Path to source code
+    environment: z.record(z.string()).optional(),
+    logLevel: z.string().default("INFO"),
+    events: z.array(ApiEventSchema).optional(),
+    attachedLayers: LayerSchema.array().optional(),
+    layers: z.array(LayerSchema).default([]),
+  })
+  .passthrough();
+
+const CloudSchema = z
+  .object({
+    region: z.string(),
+  })
+  .passthrough();
 // Generic multi-cloud schema
 export const MultiCloudConfigSchema = z.object({
   // Base configuration
@@ -42,23 +70,11 @@ export const MultiCloudConfigSchema = z.object({
   version: z.string(),
   provider: z.enum(["aws", "azure", "gcp"]),
   deploymentType: z.enum(["serverless", "container", "vm"]),
-  tempFolder: z.string().optional(),
+  tempFolder: z.string().default("/tmp"),
   operatingSystem: z.enum(["linux"]).default("linux"),
 
   // Cloud provider specific config
-  cloud: z
-    .object({
-      region: z.string(),
-      accountId: z.string().optional(),
-      credentials: z
-        .object({
-          profile: z.string().optional(),
-          accessKey: z.string().optional(),
-          secretKey: z.string().optional(),
-        })
-        .optional(),
-    })
-    .passthrough(),
+  cloud: CloudSchema,
 
   offline: z
     .object({
@@ -69,90 +85,7 @@ export const MultiCloudConfigSchema = z.object({
     }),
   apiSuffix: z.string().default("Api"),
   // Function configuration
-  functions: z
-    .object({
-      runtime: z.object({
-        type: z.string().describe("e.g., 'node', 'python'"),
-        version: z.string().optional().describe("e.g., '20.x', '3.10'"),
-      }),
-      name: z.string(),
-      handler: z.string(),
-      source: z.string(), // Path to source code
-      memorySize: z.number().optional(),
-      timeout: z.number().optional().describe("Timeout in seconds"),
-      environment: z.record(z.string()).optional(),
-      concurrency: z.number().default(0),
-      logLevel: z.string().default("INFO"),
-      events: z.array(ApiEventSchema).optional(),
-      attachedLayers: LayerSchema.array().optional(),
-      layers: z.array(LayerSchema).default([]),
-      permissions: z
-        .object({
-          storageAccess: z.array(z.string()).optional(),
-          customPolicies: z
-            .array(
-              z.object({
-                name: z.string(),
-                actions: z.array(z.string()),
-                resources: z.array(z.string()),
-              })
-            )
-            .optional(),
-          logging: z.boolean().optional(),
-          monitoring: z.boolean().optional(),
-        })
-        .optional(),
-    })
-    .passthrough()
-    .array(),
-
-  // Storage configuration
-  storage: z
-    .object({
-      type: z.enum(["object-storage", "database", "cache"]),
-      name: z.string(),
-      config: z
-        .object({
-          versioning: z.boolean().default(false),
-          encryption: z.boolean().optional(),
-          publicAccess: z.boolean().default(false),
-          lifecycle: z
-            .object({
-              enabled: z.boolean().optional(),
-              rules: z
-                .array(
-                  z.object({
-                    id: z.string(),
-                    status: z.enum(["enabled", "disabled"]),
-                    expiration: z.number().optional(),
-                    transitions: z
-                      .array(
-                        z.object({
-                          days: z.number(),
-                          storageClass: z.string(),
-                        })
-                      )
-                      .optional(),
-                  })
-                )
-                .default([]),
-            })
-            .optional(),
-        })
-        .passthrough()
-        .optional(),
-    })
-    .optional(),
-
-  // Deployment configuration
-  deployment: z
-    .object({
-      environment: z.record(z.string()).optional(),
-      tags: z.record(z.string()).optional(),
-    })
-    .passthrough()
-    .optional(),
-
+  functions: FunctionSchema.array(),
   package: z
     .object({
       individually: z.boolean().default(true),
@@ -173,6 +106,9 @@ export const MultiCloudConfigSchema = z.object({
     .optional(),
 });
 
+export type RuntimeConfig = z.infer<typeof RuntimeSchema>;
+export type CloudConfig = z.infer<typeof CloudSchema>;
+export type FunctionConfig = z.infer<typeof FunctionSchema>;
 export type MultiCloudConfig = z.infer<typeof MultiCloudConfigSchema>;
 export type Layer = z.infer<typeof LayerSchema>;
 // Provider-specific type guards
@@ -226,6 +162,9 @@ export class MultiCloudDeployer {
       this.config.functions[i].environment["PROVIDER"] = this.config.provider;
       this.config.functions[i].environment["TEMP_FOLDER"] =
         this.config.tempFolder;
+      this.config.functions[i].environment["TEMP_FOLDER"] =
+        this.config.tempFolder;
+
       if (this.config.functions[i].memorySize) {
         this.config.functions[i].environment["FUNCTION_MEMORY_SIZE"] =
           this.config.functions[i].memorySize.toString();
