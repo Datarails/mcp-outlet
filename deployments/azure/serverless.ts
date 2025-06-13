@@ -28,6 +28,7 @@ import { zipDirectoryAsIs, zipSinglePackage } from "../package/compress.ts";
 
 // Azure-specific defaults
 const AZURE_DEFAULTS = {
+  cacheStorageSkuName: "Premium_LRS",
   functionApp: {
     osType: "Linux",
     runtimeStack: "node",
@@ -94,6 +95,9 @@ export class AzureConfigNormalizer {
       stage: this.config.stage,
       version: this.config.version,
       containerName: "deployments",
+      cacheStorageSkuName:
+        (this.config.cacheStorageSkuName as string) ||
+        AZURE_DEFAULTS.cacheStorageSkuName,
       storageAccountName: `${this.config.service}${this.config.stage}storage`
         .replace(/-/g, "")
         .toLowerCase()

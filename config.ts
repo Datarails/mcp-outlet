@@ -1,4 +1,8 @@
-import { Layer, MultiCloudConfig } from "./deployments/shared.ts";
+import {
+  Layer,
+  MultiCloudConfig,
+  SupportedProvider,
+} from "./deployments/shared.ts";
 import { config } from "dotenv";
 config(); // Load .env file
 
@@ -10,12 +14,16 @@ const uvLayer: Layer = {
 const CONFIGURATION: MultiCloudConfig = {
   // Base configuration
   service: "mcp-outlet",
-  stage: "dev",
+  stage: process.env.STAGE,
   version: "v1",
-  provider: "azure",
   deploymentType: "serverless",
+
+  // this is used for the azure functions app cache storage sku
+  cacheStorageSkuName: process.env.CACHE_STORAGE_SKU_NAME,
+
   // Cloud provider specific config
   cloud: {
+    provider: process.env.CLOUD_PROVIDER as SupportedProvider,
     region: process.env.REGION,
     accountId: process.env.ACCOUNT_ID,
     resourceGroup: process.env.RESOURCE_GROUP,

@@ -56,56 +56,63 @@ const FunctionSchema = z
     layers: z.array(LayerSchema).default([]),
   })
   .passthrough();
-
+const SupportedProviderSchema = z.enum(["azure"]);
 const CloudSchema = z
   .object({
     region: z.string(),
+    provider: SupportedProviderSchema,
   })
   .passthrough();
+
 // Generic multi-cloud schema
-export const MultiCloudConfigSchema = z.object({
-  // Base configuration
-  service: z.string(),
-  stage: z.string(),
-  version: z.string(),
-  provider: z.enum(["aws", "azure", "gcp"]),
-  deploymentType: z.enum(["serverless", "container", "vm"]),
-  tempFolder: z.string().default("/tmp"),
-  operatingSystem: z.enum(["linux"]).default("linux"),
+export const MultiCloudConfigSchema = z
+  .object({
+    // Base configuration
+    service: z.string(),
+    stage: z.string().default("dev"),
+    version: z.string(),
+    deploymentType: z.enum(["serverless"]),
+    tempFolder: z.string().default("/tmp"),
+    operatingSystem: z.enum(["linux"]).default("linux"),
 
-  // Cloud provider specific config
-  cloud: CloudSchema,
+    // Cloud provider specific config
+    cloud: CloudSchema,
 
-  offline: z
-    .object({
-      port: z.number().default(3000),
-    })
-    .default({
-      port: 3000,
-    }),
-  apiSuffix: z.string().default("Api"),
-  // Function configuration
-  functions: FunctionSchema.array(),
-  package: z
-    .object({
-      individually: z.boolean().default(true),
-      patterns: z.string().array().default([]),
-      outputDir: z.string().default(".mcp-outlet"),
-      esbuild: z.object({
-        external: z.string().array().default([]),
-        bundle: z.boolean().default(true),
-        minify: z.boolean().default(true),
-        format: z.enum(["esm", "cjs"]).default("esm"),
-        target: z.string().default("node20"),
-        platform: z.enum(["node", "browser"]).default("node"),
-        mainFields: z.string().array().default(["module", "main"]),
-        conditions: z.string().array().default(["import", "module", "default"]),
-        banner: z.record(z.string()).optional(),
+    offline: z
+      .object({
+        port: z.number().default(3000),
+      })
+      .default({
+        port: 3000,
       }),
-    })
-    .optional(),
-});
+    apiSuffix: z.string().default("Api"),
+    // Function configuration
+    functions: FunctionSchema.array(),
+    package: z
+      .object({
+        individually: z.boolean().default(true),
+        patterns: z.string().array().default([]),
+        outputDir: z.string().default(".mcp-outlet"),
+        esbuild: z.object({
+          external: z.string().array().default([]),
+          bundle: z.boolean().default(true),
+          minify: z.boolean().default(true),
+          format: z.enum(["esm", "cjs"]).default("esm"),
+          target: z.string().default("node20"),
+          platform: z.enum(["node", "browser"]).default("node"),
+          mainFields: z.string().array().default(["module", "main"]),
+          conditions: z
+            .string()
+            .array()
+            .default(["import", "module", "default"]),
+          banner: z.record(z.string()).optional(),
+        }),
+      })
+      .optional(),
+  })
+  .passthrough();
 
+export type SupportedProvider = z.infer<typeof SupportedProviderSchema>;
 export type RuntimeConfig = z.infer<typeof RuntimeSchema>;
 export type CloudConfig = z.infer<typeof CloudSchema>;
 export type FunctionConfig = z.infer<typeof FunctionSchema>;

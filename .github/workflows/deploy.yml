@@ -1,0 +1,95 @@
+# Deploy to Cloud Provider
+# 
+# Required GitHub Secrets (sensitive):
+#   - AZURE_CLIENT_ID
+#   - AZURE_TENANT_ID  
+#   - AZURE_SUBSCRIPTION_ID
+#   - AWS_ACCOUNT_ID (for future AWS support)
+#
+# Optional GitHub Variables (non-sensitive):
+#   - STAGE (default: dev)
+#   - REGION (default: eastus for Azure, us-east-1 for AWS)
+#   - RESOURCE_GROUP (Azure only)
+#   - CACHE_STORAGE_SKU_NAME (default: Premium_LRS)
+#   - PYTHON_SKU_NAME, PYTHON_SKU_TIER (default: EP1, ElasticPremium)
+#   - NODE_SKU_NAME, NODE_SKU_TIER (default: EP1, ElasticPremium)
+#   - All other variables from .env.example
+#
+# Alternative: Create .env.production file in repo (less secure)
+
+name: Deploy to Cloud
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  CLOUD_PROVIDER: azure  # Required: currently only 'azure' supported
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      # Azure Authentication
+      - name: Azure Authentication
+        if: env.CLOUD_PROVIDER == 'azure'
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      
+      # Azure Deployment
+      - name: Azure Deploy
+        if: env.CLOUD_PROVIDER == 'azure'
+        run: npm run deploy
+      
+      # Future: AWS Authentication (when supported)
+      # - name: AWS Authentication
+      #   if: env.CLOUD_PROVIDER == 'aws'
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+      
+      # Future: AWS Deployment (when supported)
+      # - name: AWS Deploy
+      #   if: env.CLOUD_PROVIDER == 'aws'
+      #   run: npm run deploy
+      #   env:
+      #     # Core Configuration
+      #     STAGE: ${{ vars.STAGE || 'dev' }}
+      #     CLOUD_PROVIDER: ${{ env.CLOUD_PROVIDER }}
+      #     REGION: ${{ vars.REGION || 'us-east-1' }}
+      #     ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      #     
+      #     # AWS Lambda Configuration
+      #     PYTHON_MEMORY_SIZE: ${{ vars.PYTHON_MEMORY_SIZE || '512' }}
+      #     PYTHON_TIMEOUT: ${{ vars.PYTHON_TIMEOUT || '29' }}
+      #     NODE_MEMORY_SIZE: ${{ vars.NODE_MEMORY_SIZE || '512' }}
+      #     NODE_TIMEOUT: ${{ vars.NODE_TIMEOUT || '29' }}
+      
+      # Future: GCP Authentication (when supported)
+      # - name: GCP Authentication
+      #   if: env.CLOUD_PROVIDER == 'gcp'
+      #   uses: google-github-actions/auth@v1
+      #   with:
+      #     workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      
+      - name: Deployment Success
+        run: |
+          echo "✅ Successfully deployed to $CLOUD_PROVIDER"

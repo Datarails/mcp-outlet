@@ -34,7 +34,8 @@ export class DeployerFactory extends MultiCloudDeployer {
   }
 
   private createDelegate(): MultiCloudDeployer {
-    const { provider, deploymentType } = this.config;
+    const deploymentType = this.config.deploymentType;
+    const provider = this.config.cloud.provider;
 
     if (!DeployerFactory.deployerRegistry.has(provider)) {
       throw new Error(

@@ -11,6 +11,7 @@ export interface BaseConfig extends CloudConfig {
   containerName: string;
   storageAccountName: string;
   cacheStorageAccountName: string;
+  cacheStorageSkuName: string;
 }
 
 // Function App configuration
@@ -466,7 +467,7 @@ export async function deployStack(
     try {
       // Create cache storage account
       execSync(
-        `az storage account create --resource-group ${baseConfig.resourceGroup} --name ${baseConfig.cacheStorageAccountName} --location ${baseConfig.region} --kind FileStorage --sku Premium_LRS --output none`,
+        `az storage account create --resource-group ${baseConfig.resourceGroup} --name ${baseConfig.cacheStorageAccountName} --location ${baseConfig.region} --kind FileStorage --sku ${baseConfig.cacheStorageAccountSkuName} --output none`,
         { stdio: "inherit" }
       );
     } catch (error) {
