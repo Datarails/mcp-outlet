@@ -1,9 +1,15 @@
 import { execSync } from "child_process";
-import { CloudConfig, FunctionConfig, MultiCloudConfig } from "../shared.ts";
+import {
+  CloudConfig,
+  execSyncWithoutThrow,
+  FunctionConfig,
+  MultiCloudConfig,
+  NetworkAccessConfig,
+} from "../shared.ts";
 import { existsSync } from "fs";
 
 // Base configuration interface
-export interface BaseConfig extends CloudConfig {
+export interface BaseConfig extends CloudConfig, NetworkAccessConfig {
   service: string;
   stage: string;
   version: string;
@@ -12,6 +18,9 @@ export interface BaseConfig extends CloudConfig {
   storageAccountName: string;
   cacheStorageAccountName: string;
   cacheStorageSkuName: string;
+  nsgRuleName: string;
+  allowedSourceAddressPrefixes: string[];
+  vnetName: string;
 }
 
 // Function App configuration
@@ -21,6 +30,7 @@ export interface FunctionAppConfig extends FunctionConfig {
   osType: string;
   skuName: string;
   skuTier: string;
+  skuFamily: string;
   logLevel: string;
   events?: ApiConfig[];
 }
@@ -86,8 +96,8 @@ export function validateConfig(config: MultiCloudConfig) {
   if (!config.functions || config.functions.length === 0) {
     throw new Error("At least one function configuration is required");
   }
-  const skuNames = new Set(this.config.functions.map((v) => v.skuName));
-  const skuTiers = new Set(this.config.functions.map((v) => v.skuTier));
+  const skuNames = new Set(config.functions.map((v) => v.skuName));
+  const skuTiers = new Set(config.functions.map((v) => v.skuTier));
   if (skuNames.size > 1 || skuTiers.size > 1) {
     throw new Error("All functions must have the same skuName and skuTier");
   }
@@ -140,23 +150,19 @@ export interface BicepDeploymentConfig {
 export function generateBicepTemplate(config: {
   base: BaseConfig;
   config: BicepDeploymentConfig;
+  subnetIndex: number; // NEW: for unique IP ranges
 }): string {
-  const { base, config: azureConfig } = config;
+  const { base, config: azureConfig, subnetIndex } = config;
 
   // Create tags object without duplicates
-  const baseTags = {
-    ManagedBy: "mcp-outlet",
-    Service: base.service,
-    Stage: base.stage,
-    Environment: "development",
-  };
-
-  const allTags = azureConfig.additionalTags
-    ? { ...baseTags, ...azureConfig.additionalTags }
-    : baseTags;
+  const allTags = azureConfig.additionalTags || {};
 
   // Get the first function app for configuration defaults
   const primaryFunc = azureConfig.functionApps[0];
+
+  // Calculate unique CIDR blocks based on subnetIndex
+  const functionSubnetCidr = `10.0.${subnetIndex * 2 + 1}.0/24`;
+  const peSubnetCidr = `10.0.${subnetIndex * 2 + 2}.0/24`;
 
   // Generate Bicep template content matching the working template structure
   const bicepTemplate = `// Azure Function App Bicep Template
@@ -171,6 +177,9 @@ param stage string = '${base.stage}'
 
 @description('The Azure region')
 param location string = '${base.region}'
+
+@description('Enable private networking')
+param isPrivate bool = ${base.isPrivate}
 
 @description('The name of the Azure Function app (must be globally unique).')
 param functionAppName string = '\${resourceNamePrefix}-\${stage}-${
@@ -196,12 +205,24 @@ param functionPlanOS string = '${primaryFunc.osType}'
   'EP2'
   'EP3'
 ])
-param functionAppPlanSku string = '${primaryFunc.skuName}'
+param elasticPremiumSku string = '${primaryFunc.skuName}'
 
 @description('Linux runtime stack in format <runtime>|<version> (Linux only).')
 param linuxFxVersion string = '${primaryFunc.runtimeStack.toUpperCase()}|${
     primaryFunc.runtimeVersion
   }'
+
+@description('Function App subnet address prefix')
+param functionSubnetAddressPrefix string = '${functionSubnetCidr}'
+
+@description('Private endpoint subnet address prefix')
+param privateEndpointSubnetAddressPrefix string = '${peSubnetCidr}'
+
+@description('Existing NSG name (created by deployNetwork)')
+param networkSecurityGroupName string = '${base.networkSecurityGroup}'
+
+@description('Existing DNS Zone name (created by deployNetwork)')
+param dnsZoneName string = '${base.dnsZoneName}'
 
 @description('Common tags for all resources')
 param tags object = {
@@ -212,9 +233,55 @@ param tags object = {
 
 // Variables - following working template patterns
 var isReserved = (functionPlanOS == 'Linux')
-var storageAccountName = toLower(replace('\${resourceNamePrefix}\${stage}storage', '-', ''))
+var storageAccountName = '${base.storageAccountName}'
 var appServicePlanName = '\${functionAppName}-plan'
 var applicationInsightsName = '\${functionAppName}-ai'
+var vnetName = '${base.vnetName}' 
+var privateEndpointName = '\${functionAppName}-pe'
+
+// Reference existing VNet
+resource existingVnet 'Microsoft.Network/virtualNetworks@2023-09-01' existing = if (isPrivate) {
+  name: vnetName
+}
+
+// Reference existing NSG (created by deployNetwork)
+resource existingNsg 'Microsoft.Network/networkSecurityGroups@2023-09-01' existing = if (isPrivate) {
+  name: networkSecurityGroupName
+}
+
+// Reference existing DNS Zone (created by deployNetwork)
+resource existingDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' existing = if (isPrivate) {
+  name: dnsZoneName
+}
+
+// Create subnets separately instead of inline
+resource functionSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-09-01' = if (isPrivate) {
+  name: functionAppName
+  parent: existingVnet
+  properties: {
+    addressPrefix: functionSubnetAddressPrefix
+    delegations: [
+      {
+        name: 'Microsoft.Web/serverFarms'
+        properties: {
+          serviceName: 'Microsoft.Web/serverFarms'
+        }
+      }
+    ]
+  }
+}
+
+resource peSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-09-01' = if (isPrivate) {
+  name: '\${functionAppName}-pe'
+  parent: existingVnet
+  properties: {
+    addressPrefix: privateEndpointSubnetAddressPrefix
+    networkSecurityGroup: {
+      id: existingNsg.id
+    }
+  }
+  dependsOn: [functionSubnet]
+}
 
 // Shared App Service Plan (Elastic Premium)
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
@@ -222,14 +289,18 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   location: location
   tags: tags
   sku: {
-    name: functionAppPlanSku
-    tier: 'ElasticPremium'
-    family: 'EP'
+    name: elasticPremiumSku
+    tier: '${primaryFunc.skuTier}'
+    family: '${primaryFunc.skuFamily}'
   }
   kind: 'elastic'
   properties: {
     reserved: isReserved
-    maximumElasticWorkerCount: 20
+    ${
+      primaryFunc.maximumElasticWorkerCount
+        ? `maximumElasticWorkerCount: ${primaryFunc.maximumElasticWorkerCount}`
+        : ""
+    }
   }
 }
 
@@ -254,9 +325,13 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
     serverFarmId: appServicePlan.id
     reserved: isReserved
     httpsOnly: true
+    virtualNetworkSubnetId: isPrivate ? functionSubnet.id : null 
+    publicNetworkAccess: isPrivate ? 'Disabled' : 'Enabled'
+    vnetRouteAllEnabled: isPrivate ? true : null
     siteConfig: {
       minTlsVersion: '1.2'
       linuxFxVersion: isReserved ? linuxFxVersion : null
+      vnetRouteAllEnabled: isPrivate ? true : null
       appSettings: [
         {
           name: 'APPINSIGHTS_INSTRUMENTATIONKEY'
@@ -307,12 +382,53 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
             : ""
         }
       ]
-      functionAppScaleLimit: 2
+      ${
+        primaryFunc.scaleLimit
+          ? `functionAppScaleLimit: ${primaryFunc.scaleLimit}`
+          : ""
+      }
       cors: {
         allowedOrigins: ['*']
         supportCredentials: false
       }
     }
+  }
+}
+
+// Private Endpoint (only if private)
+resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = if (isPrivate) {
+  name: privateEndpointName
+  location: location
+  tags: tags
+  properties: {
+    subnet: {
+      id: peSubnet.id 
+    }
+    privateLinkServiceConnections: [
+      {
+        name: privateEndpointName
+        properties: {
+          privateLinkServiceId: functionApp.id
+          groupIds: ['sites']
+        }
+      }
+    ]
+  }
+}
+
+// Private DNS Zone Group (only if private)
+resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = if (isPrivate) {
+  name: 'default'
+  parent: privateEndpoint
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'config'
+        properties: {
+          privateDnsZoneId: existingDnsZone.id
+        }
+      }
+    ]
   }
 }
 
@@ -323,6 +439,7 @@ resource zipDeploy 'Microsoft.Web/sites/extensions@2021-02-01' = {
   }
   dependsOn: [
     functionApp
+    privateEndpoint
   ]
 }
 
@@ -332,15 +449,15 @@ output applicationInsightsName string = applicationInsights.name
 output applicationInsightsInstrumentationKey string = applicationInsights.properties.InstrumentationKey
 output functionAppName string = functionApp.name
 output functionAppUrl string = 'https://\${functionApp.properties.defaultHostName}'
+output privateEndpointIP string = isPrivate ? privateEndpoint.properties.customDnsConfigs[0].ipAddresses[0] : ''
+output vnetName string = isPrivate ? existingVnet.name : ''
 output packageUri string = packageUri
 `;
 
   return bicepTemplate.trim();
 }
-
 export async function uploadDeploymentPackages(
   baseConfig: BaseConfig,
-  storageAccountName: string,
   containerName: string,
   runtime: string
 ): Promise<string> {
@@ -352,7 +469,7 @@ export async function uploadDeploymentPackages(
 
   console.log(`📂 Package path: ${zipPath}`);
   console.log(`📂 Blob name: ${blobName}`);
-  console.log(`🗄️ Storage account: ${storageAccountName}`);
+  console.log(`🗄️ Storage account: ${baseConfig.storageAccountName}`);
   console.log(`📁 Container: ${containerName}`);
 
   // Check if package exists
@@ -365,7 +482,7 @@ export async function uploadDeploymentPackages(
   // Get storage account key for authentication
   console.log("🔑 Getting storage account key...");
   const storageKeyResult = execSync(
-    `az storage account keys list --resource-group "${baseConfig.resourceGroup}" --account-name "${storageAccountName}" --query "[0].value" --output tsv`,
+    `az storage account keys list --resource-group "${baseConfig.resourceGroup}" --account-name "${baseConfig.storageAccountName}" --query "[0].value" --output tsv`,
     {
       stdio: "pipe",
       encoding: "utf8",
@@ -376,10 +493,10 @@ export async function uploadDeploymentPackages(
   try {
     // Upload zip to blob storage using account key
     console.log(
-      `📤 Uploading ${zipPath} to ${storageAccountName}/${containerName}/${blobName}...`
+      `📤 Uploading ${zipPath} to ${baseConfig.storageAccountName}/${containerName}/${blobName}...`
     );
     execSync(
-      `az storage blob upload --account-name "${storageAccountName}" --account-key "${storageKey}" --container-name "${containerName}" --name "${blobName}" --file "${zipPath}" --overwrite`,
+      `az storage blob upload --account-name "${baseConfig.storageAccountName}" --account-key "${storageKey}" --container-name "${containerName}" --name "${blobName}" --file "${zipPath}" --overwrite`,
       {
         stdio: "inherit",
       }
@@ -389,7 +506,7 @@ export async function uploadDeploymentPackages(
     // Verify the upload
     console.log("🔍 Verifying upload...");
     const blobList = execSync(
-      `az storage blob list --account-name "${storageAccountName}" --account-key "${storageKey}" --container-name "${containerName}" --query "[?name=='${blobName}'].{name:name,size:properties.contentLength}" --output json`,
+      `az storage blob list --account-name "${baseConfig.storageAccountName}" --account-key "${storageKey}" --container-name "${containerName}" --query "[?name=='${blobName}'].{name:name,size:properties.contentLength}" --output json`,
       {
         stdio: "pipe",
         encoding: "utf8",
@@ -415,13 +532,12 @@ export async function deployStack(
   baseConfig: BaseConfig,
   tags: Record<string, string>
 ): Promise<{
-  storageAccountName: string;
   storageKey: string;
   cacheStorageKey: string;
 }> {
   try {
     console.log(`📦 Creating resource group: ${baseConfig.resourceGroup}`);
-    execSync(
+    execSyncWithoutThrow(
       `az group create --name "${baseConfig.resourceGroup}" --location "${
         baseConfig.region
       }" --tags ${Object.entries(tags)
@@ -431,56 +547,41 @@ export async function deployStack(
         stdio: "inherit",
       }
     );
-
-    // Calculate storage account name EXACTLY like in Bicep template
-    const storageAccountName = `${baseConfig.service}${baseConfig.stage}storage`
-      .replace(/-/g, "") // Remove dashes (like replace function in Bicep)
-      .toLowerCase()
-      .substring(0, 24); // Limit to 24 characters
     console.log(
-      `🔑 Creating storage account ${storageAccountName} in resource group ${baseConfig.resourceGroup} in region ${baseConfig.region}`
+      `🔑 Creating storage account ${baseConfig.storageAccountName} in resource group ${baseConfig.resourceGroup} in region ${baseConfig.region}`
     );
-    try {
-      // Create storage account
-      execSync(
-        `az storage account create --name "${storageAccountName}" --resource-group "${baseConfig.resourceGroup}" --location "${baseConfig.region}" --sku Standard_LRS --kind StorageV2`,
-        { stdio: "inherit" }
-      );
-
-      // Create container
-      execSync(
-        `az storage container create --name "${baseConfig.containerName}" --account-name "${storageAccountName}" --auth-mode login`,
-        { stdio: "inherit" }
-      );
-
-      console.log(
-        `✅ Storage ${storageAccountName} account and container ${baseConfig.containerName} created`
-      );
-    } catch (error) {
-      console.log("ℹ️ Storage account might already exist, continuing...");
-    }
+    // Create storage account
+    execSyncWithoutThrow(
+      `az storage account create --name "${baseConfig.storageAccountName}" --resource-group "${baseConfig.resourceGroup}" --location "${baseConfig.region}" --sku Standard_LRS --kind StorageV2`,
+      { stdio: "inherit" }
+    );
+    // Create container
+    execSyncWithoutThrow(
+      `az storage container create --name "${baseConfig.containerName}" --account-name "${baseConfig.storageAccountName}" --auth-mode login`,
+      { stdio: "inherit" }
+    );
+    console.log(
+      `✅ Storage ${baseConfig.storageAccountName} account and container ${baseConfig.containerName} created`
+    );
 
     // Creating cache storage account
     console.log(
       `🔑 Creating cache storage account ${baseConfig.cacheStorageAccountName} in resource group ${baseConfig.resourceGroup} in region ${baseConfig.region}`
     );
-    try {
-      // Create cache storage account
-      execSync(
-        `az storage account create --resource-group ${baseConfig.resourceGroup} --name ${baseConfig.cacheStorageAccountName} --location ${baseConfig.region} --kind FileStorage --sku ${baseConfig.cacheStorageAccountSkuName} --output none`,
-        { stdio: "inherit" }
-      );
-    } catch (error) {
-      console.log(
-        "ℹ️ Cache storage account might already exist, continuing..."
-      );
-    }
+
+    execSyncWithoutThrow(
+      `az storage account create --resource-group ${baseConfig.resourceGroup} --name ${baseConfig.cacheStorageAccountName} --location ${baseConfig.region} --kind FileStorage --sku ${baseConfig.cacheStorageSkuName} --output none`,
+      { stdio: "inherit" }
+    );
+    console.log(
+      `✅ Cache storage account ${baseConfig.cacheStorageAccountName} created`
+    );
 
     // Azure CLI expects format: YYYY-MM-DDTHH:MM:SSZ (without milliseconds)
     // Get storage account key
     console.log("🔑 Getting storage account key for SAS token...");
     const storageKeyResult = execSync(
-      `az storage account keys list --resource-group "${baseConfig.resourceGroup}" --account-name "${storageAccountName}" --query "[0].value" --output tsv`,
+      `az storage account keys list --resource-group "${baseConfig.resourceGroup}" --account-name "${baseConfig.storageAccountName}" --query "[0].value" --output tsv`,
       {
         stdio: "pipe",
         encoding: "utf8",
@@ -494,13 +595,60 @@ export async function deployStack(
       }
     );
 
+    // Deploy network resources
+    await deployNetwork(baseConfig);
+
+    // Get storage account keys
     const storageKey = storageKeyResult.trim();
     const cacheStorageKey = cacheStorageKeyResult.trim();
 
-    return { storageAccountName, storageKey, cacheStorageKey };
+    return { storageKey, cacheStorageKey };
   } catch (error) {
     console.error("❌ Stack deployment failed:", error.message);
     throw error;
+  }
+}
+
+export async function deployNetwork(baseConfig: BaseConfig): Promise<void> {
+  if (baseConfig.isPrivate) {
+    console.log(
+      `🔍 Deploying network resources for ${baseConfig.service}-${baseConfig.stage}`
+    );
+
+    // Create Private DNS Zone
+    execSyncWithoutThrow(
+      `az network private-dns zone create --resource-group ${baseConfig.resourceGroup} --name ${baseConfig.dnsZoneName} --output none`,
+      { stdio: "inherit" }
+    );
+    console.log(`✅ Private DNS zone ${baseConfig.dnsZoneName} ensured`);
+
+    // Create NSG
+    execSyncWithoutThrow(
+      `az network nsg create --resource-group ${baseConfig.resourceGroup} --name ${baseConfig.networkSecurityGroup} --location ${baseConfig.region} --output none`,
+      { stdio: "inherit" }
+    );
+    console.log(`✅ NSG ${baseConfig.networkSecurityGroup} ensured`);
+
+    // Create NSG Rule
+    if (baseConfig.allowedSourceAddressPrefixes.length) {
+      execSyncWithoutThrow(
+        `az network nsg rule create --resource-group ${baseConfig.resourceGroup} --nsg-name ${baseConfig.networkSecurityGroup} --name ${baseConfig.nsgRuleName} --priority 100 --direction Inbound --access Allow --protocol Tcp --source-address-prefixes ${baseConfig.allowedSourceAddressPrefixes} --destination-port-ranges 443 --output none`,
+        { stdio: "inherit" }
+      );
+      console.log(`✅ NSG rule ${baseConfig.nsgRuleName} ensured`);
+    }
+
+    execSyncWithoutThrow(
+      `az network vnet create --resource-group ${baseConfig.resourceGroup} --name ${baseConfig.vnetName} --location ${baseConfig.region} --address-prefix 10.0.0.0/16 --output none`,
+      { stdio: "inherit" }
+    );
+    console.log(`✅ VNet ${baseConfig.vnetName} ensured`);
+
+    execSyncWithoutThrow(
+      `az network private-dns link vnet create --resource-group ${baseConfig.resourceGroup} --zone-name ${baseConfig.dnsZoneName} --name ${baseConfig.vnetName}-link --virtual-network ${baseConfig.vnetName} --registration-enabled false --output none`,
+      { stdio: "inherit" }
+    );
+    console.log(`✅ DNS zone linked to VNet`);
   }
 }
 
@@ -509,7 +657,6 @@ export async function deployHandlers(
   bicepFilePath: string,
   deploymentName: string,
   baseConfig: BaseConfig,
-  storageAccountName: string,
   storageKey: string,
   cacheStorageKey: string
 ): Promise<void> {
@@ -527,7 +674,6 @@ export async function deployHandlers(
     console.log("📦 Uploading deployment package...");
     const uploadedBlobName = await uploadDeploymentPackages(
       baseConfig,
-      storageAccountName,
       baseConfig.containerName,
       functionAppConfigs[0].runtimeStack
     );
@@ -540,7 +686,7 @@ export async function deployHandlers(
         .split(".")[0] + "Z"; // Remove milliseconds and add Z
 
     const sasTokenResult = execSync(
-      `az storage blob generate-sas --account-name "${storageAccountName}" --container-name "${baseConfig.containerName}" --name "${blobName}" --permissions r --expiry "${sasExpiryTime}" --account-key "${storageKey}" --output tsv`,
+      `az storage blob generate-sas --account-name "${baseConfig.storageAccountName}" --container-name "${baseConfig.containerName}" --name "${blobName}" --permissions r --expiry "${sasExpiryTime}" --account-key "${storageKey}" --output tsv`,
       {
         stdio: "pipe",
         encoding: "utf8",
@@ -549,7 +695,7 @@ export async function deployHandlers(
     const sasToken = sasTokenResult.trim();
 
     // Construct package URI with SAS token
-    const packageUri = `https://${storageAccountName}.blob.core.windows.net/${baseConfig.containerName}/${blobName}?${sasToken}`;
+    const packageUri = `https://${baseConfig.storageAccountName}.blob.core.windows.net/${baseConfig.containerName}/${blobName}?${sasToken}`;
     console.log(`📦 Package URI with SAS token generated (expires in 24h)`);
 
     console.log(`🚀 Deploying complete infrastructure with ZipDeploy...`);
@@ -567,26 +713,16 @@ export async function deployHandlers(
     );
     const shareName = `${baseConfig.service}-${baseConfig.stage}-${functionAppConfigs[0].runtimeStack}`;
 
-    try {
-      // Create cache share
-      execSync(
-        `az storage share-rm create --resource-group ${baseConfig.resourceGroup} --storage-account ${baseConfig.cacheStorageAccountName} --name ${shareName} --quota ${functionAppConfigs[0].cache.size} --enabled-protocols SMB --output none`,
-        { stdio: "inherit" }
-      );
-    } catch (error) {
-      console.log("ℹ️ Cache share might already exist, continuing...");
-    }
-
-    try {
-      execSync(
-        `az webapp config storage-account add --resource-group ${baseConfig.resourceGroup} --name ${functionAppName} --custom-id ${shareName} --storage-type AzureFiles --share-name ${shareName} --account-name ${baseConfig.cacheStorageAccountName} --mount-path ${functionAppConfigs[0].cache.mountPath} --access-key ${cacheStorageKey}`,
-        {
-          stdio: "inherit",
-        }
-      );
-    } catch (error) {
-      console.log("ℹ️ Storage directory might already exist, continuing...");
-    }
+    execSyncWithoutThrow(
+      `az storage share-rm create --resource-group ${baseConfig.resourceGroup} --storage-account ${baseConfig.cacheStorageAccountName} --name ${shareName} --quota ${functionAppConfigs[0].cache.size} --enabled-protocols SMB --output none`,
+      { stdio: "inherit" }
+    );
+    execSyncWithoutThrow(
+      `az webapp config storage-account add --resource-group ${baseConfig.resourceGroup} --name ${functionAppName} --custom-id ${shareName} --storage-type AzureFiles --share-name ${shareName} --account-name ${baseConfig.cacheStorageAccountName} --mount-path ${functionAppConfigs[0].cache.mountPath} --access-key ${cacheStorageKey}`,
+      {
+        stdio: "inherit",
+      }
+    );
 
     console.log("✅ Deployment successful!");
   } catch (error) {

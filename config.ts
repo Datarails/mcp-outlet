@@ -1,6 +1,9 @@
 import {
   Layer,
   MultiCloudConfig,
+  getEnvArray,
+  getEnvBoolean,
+  getEnvNumber,
   SupportedProvider,
 } from "./deployments/shared.ts";
 import { config } from "dotenv";
@@ -27,6 +30,16 @@ const CONFIGURATION: MultiCloudConfig = {
     region: process.env.REGION,
     accountId: process.env.ACCOUNT_ID,
     resourceGroup: process.env.RESOURCE_GROUP,
+    storageAccountName: process.env.STORAGE_ACCOUNT_NAME,
+    cacheStorageAccountName: process.env.CACHE_STORAGE_ACCOUNT_NAME,
+  },
+  networkAccess: {
+    isPrivate: getEnvBoolean(process.env.IS_PRIVATE),
+    networkSecurityGroup: process.env.NETWORK_SECURITY_GROUP,
+    dnsZoneName: process.env.DNS_ZONE_NAME,
+    allowedSourceAddressPrefixes: getEnvArray(
+      process.env.ALLOWED_SOURCE_ADDRESS_PREFIXES
+    ),
   },
   // this is handled only in remote for running local u kneed to install uv locally and add to path
   package: {
@@ -84,16 +97,19 @@ const CONFIGURATION: MultiCloudConfig = {
       // this is used for the azure functions app sku
       skuName: process.env.NODE_SKU_NAME,
       skuTier: process.env.NODE_SKU_TIER,
-
+      maximumElasticWorkerCount: getEnvNumber(
+        process.env.NODE_MAXIMUM_ELASTIC_WORKER_COUNT
+      ),
       // this is used for aws lambda
-      memorySize: process.env.NODE_MEMORY_SIZE,
-      timeout: process.env.NODE_TIMEOUT,
+      memorySize: getEnvNumber(process.env.NODE_MEMORY_SIZE),
+      timeout: getEnvNumber(process.env.NODE_TIMEOUT),
 
       // this is used for package data there is optional with default value
       cache: {
-        size: +process.env.NODE_CACHE_SIZE,
+        size: getEnvNumber(process.env.NODE_CACHE_SIZE),
         mountPath: process.env.NODE_CACHE_MOUNT_PATH,
       },
+      scaleLimit: getEnvNumber(process.env.NODE_SCALE_LIMIT),
 
       events: [
         {
@@ -119,24 +135,26 @@ const CONFIGURATION: MultiCloudConfig = {
       },
       // this is used for package data there is optional with default value
       cache: {
-        size: process.env.PYTHON_CACHE_SIZE
-          ? +process.env.PYTHON_CACHE_SIZE
-          : undefined,
+        size: getEnvNumber(process.env.PYTHON_CACHE_SIZE),
         mountPath: process.env.PYTHON_CACHE_MOUNT_PATH,
       },
 
       // this is used for the azure functions app sku
       skuName: process.env.PYTHON_SKU_NAME,
       skuTier: process.env.PYTHON_SKU_TIER,
+      maximumElasticWorkerCount: getEnvNumber(
+        process.env.PYTHON_MAXIMUM_ELASTIC_WORKER_COUNT
+      ),
 
       // this is used for aws lambda
-      memorySize: process.env.PYTHON_MEMORY_SIZE,
-      timeout: process.env.PYTHON_TIMEOUT,
+      memorySize: getEnvNumber(process.env.PYTHON_MEMORY_SIZE),
+      timeout: getEnvNumber(process.env.PYTHON_TIMEOUT),
 
       name: "mcpOutletPython",
       handler: "rpc",
       source: "src/python/app/handlers/rpc.py",
       layers: [uvLayer],
+      scaleLimit: getEnvNumber(process.env.PYTHON_SCALE_LIMIT),
       events: [
         {
           type: "http",

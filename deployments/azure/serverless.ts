@@ -21,6 +21,7 @@ import {
   resolveSourcePath,
   downloadLayer,
   Layer,
+  createUniqueHash,
 } from "../shared.ts";
 import { ESBuildServerless, FunctionConfig } from "../package/esbuild.ts";
 
@@ -47,6 +48,10 @@ const AZURE_DEFAULTS = {
   },
 };
 
+const RUNTIME_INDEX_MAPPING = {
+  node: 0,
+  python: 1,
+};
 // Runtime mapping from generic to Azure
 const RUNTIME_MAPPING: Record<string, { stack: string; version: string }> = {
   node18: { stack: "node", version: "18" },
@@ -67,6 +72,19 @@ const DOCKER_IMAGE_MAP = {
   "3.11": "python:3.11-slim",
   "3.12": "python:3.12-slim",
 };
+const SKU_FAMILY_MAP = {
+  Free: "F",
+  Shared: "D",
+  Basic: "B",
+  Standard: "S",
+  PremiumV2: "P",
+  PremiumV3: "P",
+  PremiumV4: "P",
+  IsolatedV2: "I",
+  Dynamic: "Y",
+  ElasticPremium: "EP",
+  WorkflowStandard: "WS",
+};
 
 export class AzureConfigNormalizer {
   private config: MultiCloudConfig;
@@ -77,7 +95,7 @@ export class AzureConfigNormalizer {
 
     if (!isAzureConfig(validatedConfig)) {
       throw new Error(
-        `Config is not for Azure provider. Got: ${validatedConfig.provider}`
+        `Config is not for Azure provider. Got: ${validatedConfig.cloud.provider}`
       );
     }
 
@@ -86,26 +104,37 @@ export class AzureConfigNormalizer {
 
   // Normalize generic config to Azure BaseConfig
   normalizeBaseConfig(): BaseConfig {
+    const baseName = `${this.config.service}${this.config.stage}`
+      .replace(/-/g, "")
+      .toLowerCase()
+      .substring(0, 24);
     return {
       ...this.config.cloud,
-      resourceGroup:
-        (this.config.cloud.resourceGroup as string) ||
-        `${this.config.service}-${this.config.stage}-rg`,
+      vnetName: `${baseName}vnet`,
+      resourceGroup: this.config.cloud.resourceGroup as string,
       service: this.config.service,
       stage: this.config.stage,
       version: this.config.version,
-      containerName: "deployments",
+      isPrivate: this.config.networkAccess.isPrivate,
+      networkSecurityGroup: `${baseName}nsg`,
+      dnsZoneName:
+        this.config.networkAccess.dnsZoneName ||
+        `${baseName}.privatelink.azurewebsites.net`,
+      allowedSourceAddressPrefixes:
+        (this.config.networkAccess.allowedSourceAddressPrefixes as string[]) ||
+        [],
+      nsgRuleName: createUniqueHash(
+        (
+          (this.config.networkAccess
+            .allowedSourceAddressPrefixes as string[]) || []
+        ).join(",")
+      ),
+      containerName: baseName,
       cacheStorageSkuName:
         (this.config.cacheStorageSkuName as string) ||
         AZURE_DEFAULTS.cacheStorageSkuName,
-      storageAccountName: `${this.config.service}${this.config.stage}storage`
-        .replace(/-/g, "")
-        .toLowerCase()
-        .substring(0, 24),
-      cacheStorageAccountName: `${this.config.service}${this.config.stage}cache`
-        .replace(/-/g, "")
-        .toLowerCase()
-        .substring(0, 24),
+      storageAccountName: `${baseName}storage`,
+      cacheStorageAccountName: `${baseName}cache`,
     };
   }
 
@@ -121,12 +150,14 @@ export class AzureConfigNormalizer {
       }
 
       const functionAppConfig: FunctionAppConfig = {
+        ...func,
         runtimeStack: runtime.stack,
         runtimeVersion: runtime.version,
         // this must run on linux for mounting shared cache
         osType: AZURE_DEFAULTS.functionApp.osType,
         skuName: skuName || AZURE_DEFAULTS.functionApp.skuName,
         skuTier: skuTier || AZURE_DEFAULTS.functionApp.skuTier,
+        skuFamily: SKU_FAMILY_MAP[skuTier] || "EP",
         logLevel: func.logLevel || AZURE_DEFAULTS.functionApp.logLevel,
         events: this.normalizeEventsConfig(func.name, func.events),
       };
@@ -248,6 +279,7 @@ export async function deployAzureServerless(
     const bicepTemplate = generateBicepTemplate({
       base: baseConfig,
       config: azureConfig,
+      subnetIndex: RUNTIME_INDEX_MAPPING[runtime],
     });
 
     // Write Bicep template to file
@@ -266,7 +298,6 @@ export async function deployAzureServerless(
       bicepFilePath,
       runtimeStackId,
       baseConfig,
-      stackData.storageAccountName,
       stackData.storageKey,
       stackData.cacheStorageKey
     );

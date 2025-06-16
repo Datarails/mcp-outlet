@@ -1,7 +1,8 @@
-import { loadConfig, MultiCloudConfig, MultiCloudDeployer } from "./shared.ts";
+import { MultiCloudConfig, MultiCloudDeployer } from "./shared.ts";
 import { AWSServerlessDeployer } from "./aws/serverless.ts";
 import { AzureServerlessDeployer } from "./azure/serverless.ts";
 import { LocalDevServer } from "./offline.ts";
+import CONFIGURATION from "../config.ts";
 
 export class DeployerFactory extends MultiCloudDeployer {
   private static deployerRegistry: Map<
@@ -122,7 +123,7 @@ class DeploymentOrchestrator {
   private offlineServer: LocalDevServer | undefined;
 
   constructor() {
-    this.config = loadConfig();
+    this.config = CONFIGURATION;
     this.deployer = new DeployerFactory(this.config);
   }
 
@@ -134,7 +135,7 @@ class DeploymentOrchestrator {
       this.deployer.setFunctionsEnvironment();
       await this.package();
 
-      console.log(`🚀 Starting deployment for ${this.config.provider}`);
+      console.log(`🚀 Starting deployment for ${this.config.cloud.provider}`);
       console.log(`📋 Service: ${this.config.service}-${this.config.stage}`);
 
       await this.deployer.deploy(stackName);
@@ -146,7 +147,7 @@ class DeploymentOrchestrator {
 
   async package(): Promise<void> {
     try {
-      console.log(`🚀 Starting packaging for ${this.config.provider}`);
+      console.log(`🚀 Starting packaging for ${this.config.cloud.provider}`);
       await this.deployer.package();
       console.log("✅ Packaging completed successfully!");
     } catch (error) {
@@ -159,7 +160,7 @@ class DeploymentOrchestrator {
     try {
       this.deployer.validate();
       console.log("✅ Configuration is valid!");
-      console.log(`📋 Provider: ${this.config.provider}`);
+      console.log(`📋 Provider: ${this.config.cloud.provider}`);
       console.log(`📋 Service: ${this.config.service}-${this.config.stage}`);
     } catch (error) {
       console.error("❌ Validation failed:", error);
