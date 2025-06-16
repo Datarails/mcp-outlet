@@ -42,7 +42,7 @@ $ npm install
 $ npm run deploy
 ```
 
-Need an Azure subscription? See `deployments/azure/README.md` for details.
+Need an Azure subscription? See `/docs/DEVELOPMENT.md` for details.
 
 ---
 

@@ -1,5 +1,3 @@
-import CONFIGURATION from "../config.ts";
-
 import z from "zod";
 import path, { join, parse } from "path";
 import { pipeline } from "node:stream/promises";
@@ -8,6 +6,7 @@ import fs from "fs";
 import { x } from "tar";
 import { mkdirSync } from "fs";
 import { createWriteStream, existsSync, rmSync, statSync } from "node:fs";
+import { execSync, ExecSyncOptions } from "node:child_process";
 
 const ApiEventSchema = z.object({
   type: z.enum(["rest", "http"]),
@@ -26,6 +25,14 @@ const ApiEventSchema = z.object({
     methods: z.array(z.string()),
   }),
 });
+
+const NetworkAccessSchema = z
+  .object({
+    isPrivate: z.boolean().default(false),
+    networkSecurityGroup: z.string().optional(),
+    dnsZoneName: z.string().optional(),
+  })
+  .passthrough();
 
 const LayerSchema = z.object({
   name: z.string().describe("The name of the layer which should be unique"),
@@ -47,6 +54,7 @@ const FunctionSchema = z
     }),
     runtime: RuntimeSchema,
     name: z.string(),
+    scaleLimit: z.number().optional(),
     handler: z.string(),
     source: z.string(), // Path to source code
     environment: z.record(z.string()).optional(),
@@ -56,56 +64,66 @@ const FunctionSchema = z
     layers: z.array(LayerSchema).default([]),
   })
   .passthrough();
-
+const SupportedProviderSchema = z.enum(["azure"]);
 const CloudSchema = z
   .object({
     region: z.string(),
+    provider: SupportedProviderSchema,
   })
   .passthrough();
+
 // Generic multi-cloud schema
-export const MultiCloudConfigSchema = z.object({
-  // Base configuration
-  service: z.string(),
-  stage: z.string(),
-  version: z.string(),
-  provider: z.enum(["aws", "azure", "gcp"]),
-  deploymentType: z.enum(["serverless", "container", "vm"]),
-  tempFolder: z.string().default("/tmp"),
-  operatingSystem: z.enum(["linux"]).default("linux"),
+export const MultiCloudConfigSchema = z
+  .object({
+    // Base configuration
+    service: z.string(),
+    stage: z.string().default("dev"),
+    version: z.string(),
+    deploymentType: z.enum(["serverless"]),
+    tempFolder: z.string().default("/tmp"),
+    operatingSystem: z.enum(["linux"]).default("linux"),
 
-  // Cloud provider specific config
-  cloud: CloudSchema,
+    // Cloud provider specific config
+    cloud: CloudSchema,
 
-  offline: z
-    .object({
-      port: z.number().default(3000),
-    })
-    .default({
-      port: 3000,
-    }),
-  apiSuffix: z.string().default("Api"),
-  // Function configuration
-  functions: FunctionSchema.array(),
-  package: z
-    .object({
-      individually: z.boolean().default(true),
-      patterns: z.string().array().default([]),
-      outputDir: z.string().default(".mcp-outlet"),
-      esbuild: z.object({
-        external: z.string().array().default([]),
-        bundle: z.boolean().default(true),
-        minify: z.boolean().default(true),
-        format: z.enum(["esm", "cjs"]).default("esm"),
-        target: z.string().default("node20"),
-        platform: z.enum(["node", "browser"]).default("node"),
-        mainFields: z.string().array().default(["module", "main"]),
-        conditions: z.string().array().default(["import", "module", "default"]),
-        banner: z.record(z.string()).optional(),
+    networkAccess: NetworkAccessSchema,
+
+    offline: z
+      .object({
+        port: z.number().default(3000),
+      })
+      .default({
+        port: 3000,
       }),
-    })
-    .optional(),
-});
+    apiSuffix: z.string().default("Api"),
+    // Function configuration
+    functions: FunctionSchema.array(),
+    package: z
+      .object({
+        individually: z.boolean().default(true),
+        patterns: z.string().array().default([]),
+        outputDir: z.string().default(".mcp-outlet"),
+        esbuild: z.object({
+          external: z.string().array().default([]),
+          bundle: z.boolean().default(true),
+          minify: z.boolean().default(true),
+          format: z.enum(["esm", "cjs"]).default("esm"),
+          target: z.string().default("node20"),
+          platform: z.enum(["node", "browser"]).default("node"),
+          mainFields: z.string().array().default(["module", "main"]),
+          conditions: z
+            .string()
+            .array()
+            .default(["import", "module", "default"]),
+          banner: z.record(z.string()).optional(),
+        }),
+      })
+      .optional(),
+  })
+  .passthrough();
 
+export type NetworkAccessConfig = z.infer<typeof NetworkAccessSchema>;
+export type SupportedProvider = z.infer<typeof SupportedProviderSchema>;
 export type RuntimeConfig = z.infer<typeof RuntimeSchema>;
 export type CloudConfig = z.infer<typeof CloudSchema>;
 export type FunctionConfig = z.infer<typeof FunctionSchema>;
@@ -116,19 +134,10 @@ export const isAWSConfig = (config: MultiCloudConfig): boolean =>
   config.provider === "aws";
 
 export const isAzureConfig = (config: MultiCloudConfig): boolean =>
-  config.provider === "azure";
+  config.cloud.provider === "azure";
 
 export const isGCPConfig = (config: MultiCloudConfig): boolean =>
   config.provider === "gcp";
-
-export function loadConfig(): MultiCloudConfig {
-  const config = {
-    // HERE the place to do whatever u want
-    ...CONFIGURATION,
-  };
-
-  return MultiCloudConfigSchema.parse(config);
-}
 
 export class MultiCloudDeployer {
   readonly config: MultiCloudConfig;
@@ -159,7 +168,8 @@ export class MultiCloudDeployer {
       if (!this.config.functions[i].environment) {
         this.config.functions[i].environment = {};
       }
-      this.config.functions[i].environment["PROVIDER"] = this.config.provider;
+      this.config.functions[i].environment["PROVIDER"] =
+        this.config.cloud.provider;
       this.config.functions[i].environment["TEMP_FOLDER"] =
         this.config.tempFolder;
       this.config.functions[i].environment["TEMP_FOLDER"] =
@@ -313,4 +323,47 @@ export async function downloadLayer(
   }
 
   return outPath;
+}
+
+export const getEnvNumber = (value?: string) => {
+  console.log(`getEnvNumber: ${value}`);
+  if (value) {
+    return +value;
+  }
+  return undefined;
+};
+
+export const getEnvBoolean = (value?: string) => {
+  if (value) {
+    return value === "true";
+  }
+  return undefined;
+};
+
+export const getEnvArray = (value?: string) => {
+  if (value) {
+    return value.split(",");
+  }
+  return undefined;
+};
+
+export const execSyncWithoutThrow = (
+  command: string,
+  options: ExecSyncOptions
+) => {
+  try {
+    execSync(command, options);
+  } catch (error) {
+    console.log(`Already exists: ${command}`);
+  }
+};
+
+export function createUniqueHash(input: string): string {
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    const char = input.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(36).substring(0, 6);
 }

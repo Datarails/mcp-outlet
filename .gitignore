@@ -366,3 +366,4 @@ coverage/
 *.crt
 
 cursor-mcp-config.json
+setup-mcp.sh
