@@ -1,5 +1,11 @@
 # MCP Outlet
 
+Originally created by **Ori Shmila** in 2025.
+
+This project was initiated as part of a collaboration with Datarails and is released under the Apache 2.0 license.
+
+For inquiries about future development or support, contact shmilaori@gmail.com.
+
 Universal runtime & proxy for Model-Context-Protocol (MCP) servers.
 
 MCP Outlet lets you **run any MCP-compatible server in a secure, serverless sandbox**. It forwards JSON-RPC requests, adds tracing, and cleans up resources — no custom deployment per server required.
