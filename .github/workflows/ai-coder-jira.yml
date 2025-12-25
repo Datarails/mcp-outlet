@@ -1,0 +1,915 @@
+# AI Coder Jira Integration Workflow
+#
+# This workflow integrates AI-powered code generation with Jira issues.
+# It can be triggered by Jira webhooks, GitHub issues, or manual dispatch.
+#
+# MANDATORY REPOSITORY SECRETS:
+# ==============================
+# - OPENAI_API_KEY: OpenAI API key for AI code generation (required for Codex)
+# - ANTHROPIC_API_KEY: Anthropic API key for Claude Code (required for Claude)
+# - JIRA_EMAIL: Email address for Jira API authentication
+# - JIRA_API_TOKEN: Jira API token for authentication
+# - JIRA_BASE_URL: Base URL for Jira instance (e.g., https://yourcompany.atlassian.net)
+#                  If not provided, will be derived from payload baseUrl
+# WORKFLOW INPUTS (for manual dispatch):
+# ======================================
+# - jira_issue_key: Jira issue key (default: DR-38896)
+# - jira_issue_summary: Brief description of the task
+# - ai_provider: AI provider to use (codex or claude) - default: codex
+#
+# TRIGGER EVENTS:
+# ===============
+# 1. workflow_dispatch: Manual trigger with optional inputs
+# 2. repository_dispatch: Triggered by Jira webhook (event_type: jira_trigger)
+# 3. issues: Triggered when GitHub issue gets 'ai-coder' label
+#
+
+name: ai-coder-jira
+
+on:
+  workflow_dispatch:
+    inputs:
+      jira_issue_key:
+        description: "Jira issue key (if dispatching manually)"
+        required: false
+        default: DR-38896
+      jira_issue_summary:
+        description: "Remove unreferenced import in Badge"
+        required: false
+      ai_provider:
+        description: "AI provider to use"
+        required: false
+        default: codex
+        type: choice
+        options:
+          - codex
+          - claude              
+  repository_dispatch:
+    types: [jira_trigger] # Matches "event_type" in your JSON
+  issues:
+    types: [labeled] # Run when a GH issue gets 'ai-coder'
+
+jobs:
+  run-ai-agent:
+    if: |
+      (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'ai-coder')) ||
+      (github.event_name == 'repository_dispatch' && github.event.action == 'jira_trigger') ||
+      (github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22      
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:          
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+      - name: Set token as env var
+        run: echo "GH_TOKEN=${{ steps.app-token.outputs.token }}" >> $GITHUB_ENV
+
+      - name: Debug environment
+        run: |
+          echo "Event name: ${{ github.event_name }}"
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "Triggered from Jira via repository_dispatch"            
+            echo "Jira issueKey: ${{ github.event.client_payload.jira.issueKey }}"
+            echo "Jira summary:  ${{ github.event.client_payload.jira.summary }}"
+            echo "AI Provider:   ${{ github.event.client_payload.ai_provider || 'codex' }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch"
+            echo "Jira key:     ${{ github.event.inputs.jira_issue_key }}"
+            echo "Jira summary: ${{ github.event.inputs.jira_issue_summary }}"
+            echo "AI Provider:  ${{ github.event.inputs.ai_provider }}"
+          else
+            echo "Triggered from GitHub Issue"
+            echo "Issue title:  ${{ github.event.issue.title }}"
+            echo "Issue number: ${{ github.event.issue.number }}"
+            echo "Issue URL:    ${{ github.event.issue.html_url }}"
+            echo "Labels:       ${{ toJson(github.event.issue.labels.*.name) }}"
+            echo "AI Provider:  codex (default for issue triggers)"
+          fi
+          echo "Repository:   ${{ github.repository }}"
+
+      - name: Determine AI provider
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            AI_PROVIDER="${{ github.event.inputs.ai_provider }}"
+          elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            AI_PROVIDER="${{ github.event.client_payload.ai_provider }}"
+          else
+            AI_PROVIDER="codex"  # Default for issue triggers
+          fi
+          
+          # Default to codex if not specified
+          AI_PROVIDER="${AI_PROVIDER:-codex}"
+          
+          echo "AI_PROVIDER=$AI_PROVIDER" >> $GITHUB_ENV
+          echo "✅ Using AI provider: $AI_PROVIDER"
+          
+      - name: Validate secrets (will fallback to payload baseUrl if needed)
+        run: |
+          fail=0
+          
+          # Check AI provider specific secrets
+          if [ "${{ env.AI_PROVIDER }}" = "claude" ]; then
+            if [ -z "${{ secrets.ANTHROPIC_API_KEY }}" ]; then 
+              echo "❌ Error: ANTHROPIC_API_KEY not set (required for Claude)"
+              fail=1
+            else
+              echo "✅ ANTHROPIC_API_KEY present"
+            fi
+          else
+            if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then 
+              echo "❌ Error: OPENAI_API_KEY not set (required for Codex)"
+              fail=1
+            else
+              echo "✅ OPENAI_API_KEY present"
+            fi
+          fi
+          
+          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then echo "❌ Error: OPENAI_API_KEY not set"; fail=1; fi
+          # Jira API secrets preferred; but API base can fallback to payload origin later if JIRA_BASE_URL is empty
+          if [ -z "${{ secrets.JIRA_EMAIL }}" ]; then echo "❌ Error: JIRA_EMAIL not set"; fail=1; fi
+          if [ -z "${{ secrets.JIRA_API_TOKEN }}" ]; then echo "❌ Error: JIRA_API_TOKEN not set"; fail=1; fi
+          if [ $fail -eq 1 ]; then exit 1; fi
+          echo "✅ Required secrets present (JIRA_BASE_URL is optional if payload provides baseUrl)"
+
+      - name: Install AI CLI
+        run: |
+          if [ "${{ env.AI_PROVIDER }}" = "claude" ]; then
+            echo "Installing Claude Code CLI..."
+            MAX_ATTEMPTS=15
+            ATTEMPT=1
+            
+            while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+              echo "Attempt $ATTEMPT of $MAX_ATTEMPTS"
+              
+              if npm install -g @anthropic-ai/claude-code; then
+                echo "✅ Claude Code CLI installed successfully on attempt $ATTEMPT"
+                break
+              else
+                echo "❌ Claude Code CLI install failed on attempt $ATTEMPT"
+                if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+                  echo "All install attempts failed"
+                  exit 1
+                fi
+                sleep 15
+                ATTEMPT=$((ATTEMPT + 1))
+              fi
+            done
+            echo "CLI=claude" >> $GITHUB_ENV
+            echo "CLI_COMMAND=claude code" >> $GITHUB_ENV
+          else
+            echo "Installing Codex CLI..."
+            MAX_ATTEMPTS=15
+            ATTEMPT=1
+            
+            while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+              echo "Attempt $ATTEMPT of $MAX_ATTEMPTS"
+              
+              if npm i -g @openai/codex; then
+                echo "✅ Codex CLI installed successfully on attempt $ATTEMPT"
+                break
+              else
+                echo "❌ Codex CLI install failed on attempt $ATTEMPT"
+                if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+                  echo "All install attempts failed"
+                  exit 1
+                fi
+                sleep 15
+                ATTEMPT=$((ATTEMPT + 1))
+              fi
+            done
+            echo "CLI=codex" >> $GITHUB_ENV
+            echo "CLI_COMMAND=codex" >> $GITHUB_ENV
+          fi
+
+      - name: Verify CLI installation
+        run: |
+          if [ "${{ env.AI_PROVIDER }}" = "claude" ]; then
+            if command -v claude >/dev/null 2>&1; then
+              echo "✅ Claude CLI available"
+              claude --version || echo "ℹ️  Could not get claude version"
+            else
+              echo "❌ Claude CLI not found after installation"
+              exit 1
+            fi
+          else
+            if command -v codex >/dev/null 2>&1; then
+              echo "✅ Codex CLI available"
+              codex --version || echo "ℹ️  Could not get codex version"
+            else
+              echo "❌ Codex CLI not found after installation"
+              exit 1
+            fi
+          fi
+
+      - id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          EVENT="${{ github.event_name }}"
+
+          JIRA_ISSUE_URL=""
+          if [ "$EVENT" = "repository_dispatch" ]; then
+            ISSUE_KEY="${{ github.event.client_payload.jira.issueKey }}"
+            TITLE="${{ github.event.client_payload.jira.summary }}"                        
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
+            ISSUE_KEY="${{ github.event.inputs.jira_issue_key }}"
+            TITLE="${{ github.event.inputs.jira_issue_summary }}"            
+          fi
+
+          TITLE="${TITLE:-Automated task}"
+          RAW_DESC="${RAW_DESC:-No description provided.}"
+
+          DESC_CLEANED="$(echo "$RAW_DESC" | tr '\n' ' ' | sed 's/"/'\''/g')"
+          SAFE_TITLE="$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed 's/^-*\|-*$//g')"
+          BRANCH="${ISSUE_KEY}-${SAFE_TITLE}"
+
+          echo "ISSUE_KEY=$ISSUE_KEY" >> $GITHUB_ENV
+          echo "TITLE=$TITLE" >> $GITHUB_ENV
+          echo "RAW_DESC=$RAW_DESC" >> $GITHUB_ENV
+          echo "DESC=$DESC_CLEANED" >> $GITHUB_ENV
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          
+
+          # Derive Jira API base (origin) from secret OR payload URL
+          # Prefer secret JIRA_BASE_URL; else derive "https://your-domain.atlassian.net" from JIRA_ISSUE_URL
+          SECRET_BASE="${{ secrets.JIRA_BASE_URL }}"
+          if [ -n "$SECRET_BASE" ]; then
+            API_BASE="$SECRET_BASE"
+          else
+            if [ -n "$JIRA_ISSUE_URL" ]; then
+              API_BASE="$(echo "$JIRA_ISSUE_URL" | awk -F/ '{print $1"//"$3}')"
+            else
+              API_BASE=""
+            fi
+          fi
+
+          # Construct the full Jira ticket URL
+          JIRA_ISSUE_URL=""
+          if [ -n "$API_BASE" ] && [ -n "$ISSUE_KEY" ]; then
+            # Only construct Jira URL for actual Jira issues (not GitHub issues)
+            JIRA_ISSUE_URL="${API_BASE}/browse/${ISSUE_KEY}"
+            echo "✅ Constructed Jira URL: $JIRA_ISSUE_URL"
+          else
+            echo "ℹ️  No Jira URL constructed (API_BASE='$API_BASE', ISSUE_KEY='$ISSUE_KEY')"
+          fi
+          echo "JIRA_ISSUE_URL=$JIRA_ISSUE_URL" >> $GITHUB_ENV
+          echo "API_BASE=$API_BASE" >> $GITHUB_ENV
+
+      - name: Jira – Transition to In Progress (if looks like a Jira key)
+        if: (startsWith(env.ISSUE_KEY, 'DR-') == true || startsWith(env.ISSUE_KEY, 'CA-') == true)  && env.API_BASE != ''
+        env:
+          ISSUE_KEY:      ${{ env.ISSUE_KEY }}
+          API_BASE:       ${{ env.API_BASE }}
+          JIRA_EMAIL:     ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          
+          echo "🔧 Starting Jira transition to 'In Progress'"
+          echo "   ISSUE_KEY: $ISSUE_KEY"
+          echo "   API_BASE: $API_BASE"
+          echo "   JIRA_EMAIL: ${JIRA_EMAIL:0:5}***@${JIRA_EMAIL#*@}"
+          echo "   Token length: ${#JIRA_API_TOKEN} chars"
+          
+          # Install jq if needed
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "📦 Installing jq..."
+            sudo apt-get update && sudo apt-get install -y jq >/dev/null
+          fi
+          
+          # Fetch available transitions with error handling
+          echo "📡 Fetching available transitions for $ISSUE_KEY..."
+          TRANSITIONS_URL="$API_BASE/rest/api/3/issue/$ISSUE_KEY/transitions"
+          echo "   Request URL: $TRANSITIONS_URL"
+          
+          HTTP_STATUS=$(curl -sS -X GET \
+            --url   "$TRANSITIONS_URL" \
+            --user  "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            --header 'Accept: application/json' \
+            -w '%{http_code}' \
+            -o transitions.json)
+          
+          echo "   HTTP Status: $HTTP_STATUS"
+          
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "❌ Failed to fetch transitions (HTTP $HTTP_STATUS)"
+            echo "Response body:"
+            cat transitions.json
+            exit 1
+          fi
+          
+          # Show raw response for debugging
+          echo "📋 Raw transitions response (first 500 chars):"
+          head -c 500 transitions.json; echo
+          
+          # Validate JSON structure
+          if ! jq -e '.transitions' transitions.json >/dev/null 2>&1; then
+            echo "❌ Invalid JSON structure - missing .transitions array"
+            echo "Full response:"
+            cat transitions.json
+            exit 1
+          fi
+          
+          # Show all available transitions
+          echo "📋 Available transitions:"
+          jq -r '.transitions[] | "  - \(.name) (id: \(.id)) -> \(.to.name)"' transitions.json || echo "   Failed to parse transitions"
+          
+          # Try to find "In Progress" transition with various name patterns
+          TRANSITIONS_JSON="$(cat transitions.json)"
+          
+          echo "🔍 Looking for 'In Progress' transition..."
+          INPROG_ID="$(echo "$TRANSITIONS_JSON" | jq -r '.transitions[] | select(.name=="In Progress") | .id' 2>/dev/null || echo "")"
+          
+          if [ -z "$INPROG_ID" ] || [ "$INPROG_ID" = "null" ]; then
+            echo "   Exact 'In Progress' not found, trying alternatives..."
+            
+            # Try alternative names
+            INPROG_ID="$(echo "$TRANSITIONS_JSON" | jq -r '.transitions[] | select(.name=="Start Progress") | .id' 2>/dev/null || echo "")"
+            [ -z "$INPROG_ID" ] && INPROG_ID="$(echo "$TRANSITIONS_JSON" | jq -r '.transitions[] | select(.name=="Start Work") | .id | head -n 1' 2>/dev/null || echo "")"
+            [ -z "$INPROG_ID" ] && INPROG_ID="$(echo "$TRANSITIONS_JSON" | jq -r '.transitions[] | select(.to.name=="In Progress") | .id | head -n 1' 2>/dev/null || echo "")"
+            
+            if [ -z "$INPROG_ID" ] || [ "$INPROG_ID" = "null" ]; then
+              echo "⚠️ Could not find any 'In Progress' transition with these patterns:"
+              echo "   - 'In Progress'"
+              echo "   - 'Start Progress'"  
+              echo "   - 'Start Work'"
+              echo "   - Any transition leading to 'In Progress' status"
+              echo "   Available transitions listed above. Skipping transition."
+              exit 0
+            fi
+          fi
+
+          echo "✅ Found 'In Progress' transition with ID: $INPROG_ID"
+          
+          # Apply the transition
+          echo "⚡ Applying transition id=$INPROG_ID to $ISSUE_KEY"
+          TRANSITION_URL="$API_BASE/rest/api/3/issue/$ISSUE_KEY/transitions"
+          TRANSITION_DATA="{\"transition\":{\"id\":\"$INPROG_ID\"}}"
+          
+          echo "   POST URL: $TRANSITION_URL"
+          echo "   POST Data: $TRANSITION_DATA"
+          
+          TRANSITION_STATUS=$(curl -sS -X POST \
+            --url   "$TRANSITION_URL" \
+            --user  "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data  "$TRANSITION_DATA" \
+            -w '%{http_code}' \
+            -o transition_response.json)
+          
+          echo "   Transition HTTP Status: $TRANSITION_STATUS"
+          
+          if [ "$TRANSITION_STATUS" = "204" ]; then
+            echo "✅ Successfully transitioned $ISSUE_KEY to 'In Progress'"
+          else
+            echo "❌ Transition failed (HTTP $TRANSITION_STATUS)"
+            echo "Response body:"
+            cat transition_response.json 2>/dev/null || echo "No response body"
+            exit 1
+          fi
+
+      - name: Fetch Jira issue (debug & export)
+        env:
+          ISSUE_KEY:         ${{ env.ISSUE_KEY }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          API_BASE:       ${{ env.API_BASE }}
+        run: |
+          set -euo pipefail
+
+          echo "ISSUE_KEY=${ISSUE_KEY}"
+          echo "API_BASE host: $(echo "$API_BASE" | sed -E 's#https?://([^/]+)/?.*#\1#')"
+          if [ -z "${ISSUE_KEY:-}" ]; then
+            echo "::error::ISSUE_KEY is empty"; exit 1
+          fi
+
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq not found; installing"
+            sudo apt-get update -y && sudo apt-get install -y jq
+          fi
+
+          HTTP_STATUS=$(curl -sS -X GET \
+            --url   "$API_BASE/rest/api/3/issue/$ISSUE_KEY?fields=summary,description&expand=renderedFields" \
+            --user  "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            --header 'Accept: application/json' \
+            -D headers.txt -o issue.json -w '%{http_code}')
+
+          echo "HTTP_STATUS=$HTTP_STATUS"
+          echo "Raw JSON response (first 500 chars):"
+          head -c 500 issue.json; echo
+          
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Jira GET /issue returned HTTP $HTTP_STATUS"
+            echo "Error response:"
+            cat issue.json
+            exit 1
+          fi
+
+          # Check if the response has the expected structure
+          echo "Checking JSON structure..."
+          if ! jq -e '.fields' issue.json >/dev/null 2>&1; then
+            echo "::error::Invalid JSON structure - missing .fields"
+            cat issue.json
+            exit 1
+          fi
+
+          # Extract summary with null safety
+          SUMMARY="$(jq -r 'if .fields.summary then .fields.summary else "No summary available" end' issue.json)"
+          echo "Extracted SUMMARY: $SUMMARY"
+          
+          # Extract description with comprehensive null handling
+          RENDERED="$(jq -r 'if .renderedFields and .renderedFields.description then .renderedFields.description else "" end' issue.json)"
+          if [ -n "$RENDERED" ] && [ "$RENDERED" != "null" ]; then
+            echo "Using renderedFields.description (HTML)."
+            DESC="$(printf '%s' "$RENDERED" \
+              | sed -e 's/<[^>]*>//g' \
+                    -e 's/&nbsp;/ /g' -e 's/&amp;/\&/g' -e 's/&lt;/</g' -e 's/&gt;/>/g')"
+          else
+            echo "renderedFields.description missing or null; trying to extract from ADF format."
+            # More robust ADF extraction with null safety
+            DESC="$(jq -r '
+              if .fields.description and .fields.description.content then
+                [.fields.description.content[] | 
+                 if .content then
+                   [.content[] | if .text then .text else empty end]
+                 else empty end] | 
+                flatten | join("\n")
+              else
+                "No description available"
+              end
+            ' issue.json 2>/dev/null || echo "No description available")"
+          fi
+
+          # Ensure DESC is not null or empty
+          if [ -z "$DESC" ] || [ "$DESC" = "null" ]; then
+            DESC="No description provided"
+          fi
+
+          echo "DESC length: $(printf '%s' "$DESC" | wc -c)"
+          echo "DESC preview (first 200 chars):"
+          printf '%s' "$DESC" | head -c 200; echo
+
+          # Export to env (multi-line safe)
+          echo "ISSUE_KEY=$ISSUE_KEY" >> "$GITHUB_ENV"
+          { echo "SUMMARY<<EOF"; printf '%s\n' "$SUMMARY"; echo "EOF"; } >> "$GITHUB_ENV"
+          { echo "DESC<<EOF";    printf '%s\n' "$DESC";    echo "EOF"; } >> "$GITHUB_ENV"
+
+
+      - name: Resolve base & branch
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.repository.default_branch }}"   # e.g. main
+          BR="${{ env.BRANCH }}"                                  # optional preset
+
+          # If not provided or equals BASE, synthesize a unique branch
+          if [ -z "${BR:-}" ] || [ "$BR" = "$BASE" ]; then
+            BR="codex/${ISSUE_KEY:-issue}-${GITHUB_RUN_ID}"
+          fi
+
+          echo "BASE=$BASE"   >> "$GITHUB_ENV"
+          echo "BRANCH=$BR"   >> "$GITHUB_ENV"
+          echo "Resolved BASE=$BASE, BRANCH=$BR"
+
+      # (Re)checkout the base branch to ensure correct diff target
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASE }}
+          fetch-depth: 0
+
+      - name: Create or update branch
+        env:
+          BRANCH: ${{ env.BRANCH }}
+        run: |
+          # Fetch all remote branches
+          git fetch origin
+          
+          # Check if remote branch exists
+          if git ls-remote --heads origin "${BRANCH}" | grep -q "${BRANCH}"; then
+            echo "Branch ${BRANCH} exists on remote, checking it out and pulling"
+            git checkout -B "${BRANCH}" origin/"${BRANCH}"
+            git pull origin "${BRANCH}"
+          else
+            echo "Branch ${BRANCH} doesn't exist on remote, creating new branch"
+            git checkout -B "${BRANCH}"
+          fi
+
+      - name: Implement with AI
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+            set -euo pipefail
+            
+            # Build PROMPT
+            PROMPT=$(cat <<EOF
+            ${ISSUE_KEY}: ${SUMMARY}
+
+            Details:
+            ${DESC}
+            EOF
+            )
+
+            echo "PROMPT length: $(printf '%s' "$PROMPT" | wc -c)"
+            echo "---- PROMPT preview (first 20 lines) ----"
+            printf '%s\n' "$PROMPT" | sed -n '1,20p'
+            echo "----------------------------------------"
+
+            AI_OUTPUT_FILE="ai_output_${ISSUE_KEY}_${GITHUB_RUN_ID}.txt"
+            
+            if [ "${{ env.AI_PROVIDER }}" = "claude" ]; then
+              echo "Running Claude Code..."
+              if claude --dangerously-skip-permissions -p "$PROMPT" > "$AI_OUTPUT_FILE" 2>&1; then
+                echo "✅ Claude Code completed successfully"
+                AI_SUCCESS=true
+              else
+                echo "❌ Claude Code failed"
+                AI_SUCCESS=false
+              fi
+            else
+              echo "Running Codex..."
+              if codex exec --full-auto "$PROMPT" > "$AI_OUTPUT_FILE" 2>&1; then
+                echo "✅ Codex completed successfully"
+                AI_SUCCESS=true
+              else
+                echo "❌ Codex failed"
+                AI_SUCCESS=false
+              fi
+            fi
+            
+            AI_OUTPUT=$(cat "$AI_OUTPUT_FILE")
+            echo "---- AI OUTPUT (first 50 lines) ----"
+            head -50 "$AI_OUTPUT_FILE"
+            echo "---- END OUTPUT PREVIEW ----"
+            
+            echo "AI_SUCCESS=$AI_SUCCESS" >> $GITHUB_ENV
+            
+            AI_OUTPUT_PREVIEW=$(head -50 "$AI_OUTPUT_FILE")
+            ESCAPED_PREVIEW=$(echo "$AI_OUTPUT_PREVIEW" | jq -Rs .)
+            echo "AI_OUTPUT_PREVIEW=$ESCAPED_PREVIEW" >> $GITHUB_ENV
+            echo "AI_OUTPUT_FILE=$AI_OUTPUT_FILE" >> $GITHUB_ENV
+            
+            if [ "$AI_SUCCESS" = "false" ]; then
+              exit 1
+            fi
+
+      - name: Upload AI Output as Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.AI_PROVIDER }}-output-${{ env.ISSUE_KEY }}-${{ github.run_id }}
+          path: ${{ env.AI_OUTPUT_FILE }}
+          retention-days: 30
+
+      - name: Move AI Output to Temp Directory
+        if: always()
+        run: |
+          # Create temp directory if it doesn't exist
+          mkdir -p /tmp/ai-artifacts
+          
+          # Move the file to temp directory
+          if [ -f "${{ env.AI_OUTPUT_FILE }}" ]; then
+            TEMP_FILE="/tmp/ai-artifacts/$(basename "${{ env.AI_OUTPUT_FILE }}")"
+            mv "${{ env.AI_OUTPUT_FILE }}" "$TEMP_FILE"
+            echo "📁 Moved file to: $TEMP_FILE"
+            
+            # Update environment variable with new path
+            echo "AI_OUTPUT_FILE=$TEMP_FILE" >> $GITHUB_ENV
+            echo "✅ Updated AI_OUTPUT_FILE environment variable"
+          else
+            echo "❌ File not found: ${{ env.AI_OUTPUT_FILE }}"
+          fi
+
+      - name: Configure Git & Commit changes (if any)
+        env:
+          ISSUE_KEY: ${{ env.ISSUE_KEY }}
+          TITLE: ${{ env.TITLE }}
+          BRANCH: ${{ env.BRANCH }}
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "github-actions@github.com"
+
+          if git diff --quiet; then
+            echo "ℹ️  No changes to commit."
+            # Still need to push the empty branch for PR creation
+            git push --set-upstream origin "${BRANCH}"
+          else           
+            git add -A
+            git commit -m "${ISSUE_KEY}: ${TITLE} (via ${{ env.AI_PROVIDER }})"
+            git push --set-upstream origin "${BRANCH}"
+            echo "✅ Committed and pushed changes"
+          fi
+
+      - name: Create label if it doesn't exist
+        run: |
+          # Create the ai-coder label if it doesn't exist
+          gh label create "ai-coder" --description "AI-generated code" --color "1f883d" || echo "Label already exists"
+
+      - name: Create or Update PR with gh CLI        
+        run: |
+          # Check if PR already exists for this branch
+          EXISTING_PR=$(gh pr list --head "${{ env.BRANCH }}" --base "${{ env.BASE }}" --json number --jq '.[0].number')
+          
+          if [ "$EXISTING_PR" == "null" ] || [ -z "$EXISTING_PR" ]; then
+            echo "Creating new PR"
+            gh pr create \
+              --head "${{ env.BRANCH }}" \
+              --title "${{ env.ISSUE_KEY }}: ${{ env.TITLE }}" \
+              --body "🤖 AI-generated implementation for **${{ env.ISSUE_KEY }}** using **${{ env.AI_PROVIDER }}**.
+          
+          - Branch: \`${{ env.BRANCH }}\`
+          - Trigger: \`${{ github.event_name }}\`
+          - AI Provider: \`${{ env.AI_PROVIDER }}\`
+          - Jira: ${{ env.JIRA_ISSUE_URL }}
+          - AI Output Artifact: [Download from Actions](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+              --label "ai-coder" \
+              --base "${{ env.BASE }}"
+          else
+            echo "Updating existing PR #$EXISTING_PR"
+            gh pr edit $EXISTING_PR \
+              --title "${{ env.ISSUE_KEY }}: ${{ env.TITLE }}" \
+              --body "🤖 AI-generated implementation for **${{ env.ISSUE_KEY }}** using **${{ env.AI_PROVIDER }}**.
+          
+          - Branch: \`${{ env.BRANCH }}\`
+          - Trigger: \`${{ github.event_name }}\`
+          - AI Provider: \`${{ env.AI_PROVIDER }}\`
+          - Jira: ${{ env.JIRA_ISSUE_URL }}
+          - AI Output Artifact: [Download from Actions](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+              --add-label "ai-coder"
+            echo "Updated PR: ${{ github.server_url }}/${{ github.repository }}/pull/$EXISTING_PR"
+          fi
+
+      - name: Upload AI Output to Jira as Attachment
+        if: success() && (startsWith(env.ISSUE_KEY, 'DR-') == true || startsWith(env.ISSUE_KEY, 'CA-') == true) && env.API_BASE != ''
+        env:
+          JIRA_BASE_URL: ${{ env.API_BASE }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          ISSUE_KEY: ${{ env.ISSUE_KEY }}
+        run: |
+          echo "Uploading ${{ env.AI_PROVIDER }} output to Jira as attachment..."
+          
+          ATTACHMENT_FILE="${{ env.AI_OUTPUT_FILE }}"
+          
+          if [ -f "$ATTACHMENT_FILE" ]; then
+            echo "Uploading $ATTACHMENT_FILE to Jira issue $ISSUE_KEY"
+            
+            curl -X POST \
+              -H "X-Atlassian-Token: no-check" \
+              -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+              -F "file=@$ATTACHMENT_FILE" \
+              "$JIRA_BASE_URL/rest/api/3/issue/$ISSUE_KEY/attachments"
+            
+            echo "✅ Attachment uploaded successfully"
+          else
+            echo "❌ Codex output file not found: $ATTACHMENT_FILE"
+          fi
+
+      - name: Update Jira on Success
+        if: success() && (startsWith(env.ISSUE_KEY, 'DR-') == true || startsWith(env.ISSUE_KEY, 'CA-') == true) && env.API_BASE != ''
+        env:
+          JIRA_BASE_URL: ${{ env.API_BASE }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          ISSUE_KEY: ${{ env.ISSUE_KEY }}
+          AI_OUTPUT_PREVIEW: ${{ env.AI_OUTPUT_PREVIEW }}
+        run: |
+          echo "Updating Jira ticket to Done status and adding comment..."
+          
+          PR_URL="https://github.com/${{ github.repository }}/pull/$(gh pr list --head ${{ env.BRANCH }} --json number --jq '.[0].number')"
+          
+          # Create the comment using jq for proper JSON escaping
+          COMMENT_JSON=$(jq -n \
+            --arg pr_url "$PR_URL" \
+            --arg ai_provider "${{ env.AI_PROVIDER }}" \
+            --arg preview "$AI_OUTPUT_PREVIEW" \
+            '{
+              "body": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": ("🤖 AI Coding Agent Results - Success! (using " + $ai_provider + ")"),
+                        "marks": [{"type": "strong"}]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "paragraph", 
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Pull Request: "
+                      },
+                      {
+                        "type": "text",
+                        "text": $pr_url,
+                        "marks": [{"type": "link", "attrs": {"href": $pr_url}}]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text", 
+                        "text": "Full output attached to this issue. Preview (first 50 lines):"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "codeBlock",
+                    "attrs": {"language": "text"},
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": $preview
+                      }
+                    ]
+                  }
+                ]
+              }
+            }')
+
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            "$JIRA_BASE_URL/rest/api/3/issue/$ISSUE_KEY/comment" \
+            -d "$COMMENT_JSON"
+          
+          # Transition to Done
+          TRANSITIONS=$(curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            "$JIRA_BASE_URL/rest/api/3/issue/$ISSUE_KEY/transitions")
+          
+          DONE_TRANSITION_ID=$(echo "$TRANSITIONS" | jq -r '.transitions[] | select(.name == "Done" or .to.name == "Done") | .id' | head -n 1)
+          
+          if [ -n "$DONE_TRANSITION_ID" ] && [ "$DONE_TRANSITION_ID" != "null" ]; then
+            echo "Transitioning to Done (ID: $DONE_TRANSITION_ID)"
+            curl -X POST \
+              -H "Content-Type: application/json" \
+              -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+              "$JIRA_BASE_URL/rest/api/3/issue/$ISSUE_KEY/transitions" \
+              -d "{
+                \"transition\": {
+                  \"id\": \"$DONE_TRANSITION_ID\"
+                }
+              }"
+          else
+            echo "❌ Could not find Done transition"
+          fi
+
+      - name: Update Jira on Failure  
+        if: failure() && (startsWith(env.ISSUE_KEY, 'DR-') == true || startsWith(env.ISSUE_KEY, 'CA-') == true) && env.API_BASE != ''
+        env:
+          JIRA_BASE_URL: ${{ env.API_BASE }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          ISSUE_KEY: ${{ env.ISSUE_KEY }}
+          AI_OUTPUT_PREVIEW: ${{ env.AI_OUTPUT_PREVIEW }}
+        run: |
+          echo "Updating Jira ticket to Blocked status and adding error comment..."
+          
+          ATTACHMENT_FILE="${{ env.AI_OUTPUT_FILE }}"
+          if [ -f "$ATTACHMENT_FILE" ]; then
+            echo "Uploading error output to Jira as attachment..."
+            curl -X POST \
+              -H "X-Atlassian-Token: no-check" \
+              -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+              -F "file=@$ATTACHMENT_FILE" \
+              "$JIRA_BASE_URL/rest/api/3/issue/$ISSUE_KEY/attachments" || echo "Failed to upload attachment"
+          fi
+          
+          # Add comment with error details
+          WORKFLOW_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          
+          # Create the comment using jq for proper JSON escaping
+          COMMENT_JSON=$(jq -n \
+            --arg workflow_url "$WORKFLOW_URL" \
+            --arg ai_provider "${{ env.AI_PROVIDER }}" \
+            --arg preview "$AI_OUTPUT_PREVIEW" \
+            '{
+              "body": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": ("❌ AI Coding Agent Failed (using " + $ai_provider + ")"),
+                        "marks": [{"type": "strong"}]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Workflow run: "
+                      },
+                      {
+                        "type": "text",
+                        "text": $workflow_url,
+                        "marks": [{"type": "link", "attrs": {"href": $workflow_url}}]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Error output (first 50 lines, full output attached):"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "codeBlock",
+                    "attrs": {"language": "text"},
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": $preview
+                      }
+                    ]
+                  }
+                ]
+              }
+            }')
+
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            "$JIRA_BASE_URL/rest/api/3/issue/$ISSUE_KEY/comment" \
+            -d "$COMMENT_JSON"
+          
+          # Get available transitions for debugging
+          echo "Fetching available transitions..."
+          TRANSITIONS=$(curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            "$JIRA_BASE_URL/rest/api/3/issue/$ISSUE_KEY/transitions")
+          
+          echo "Debug: Available transitions:"
+          echo "$TRANSITIONS" | jq '.transitions[] | {id: .id, name: .name, to_name: .to.name}'
+          
+          # Try to find blocked transition with multiple approaches
+          BLOCKED_TRANSITION_ID=$(echo "$TRANSITIONS" | jq -r '
+            .transitions[] | 
+            select(
+              (.name | ascii_downcase | contains("block")) or 
+              (.to.name | ascii_downcase | contains("block")) or
+              (.name | ascii_downcase | contains("fail")) or
+              (.to.name | ascii_downcase | contains("fail")) or
+              (.name | ascii_downcase | contains("pause")) or
+              (.to.name | ascii_downcase | contains("pause")) or
+              (.name | ascii_downcase | contains("stop")) or
+              (.to.name | ascii_downcase | contains("stop"))
+            ) | 
+            .id' | head -1)
+          
+          if [ -n "$BLOCKED_TRANSITION_ID" ] && [ "$BLOCKED_TRANSITION_ID" != "null" ]; then
+            echo "Found transition ID: $BLOCKED_TRANSITION_ID"
+            echo "Transitioning to Blocked status..."
+            
+            TRANSITION_RESULT=$(curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+              "$JIRA_BASE_URL/rest/api/3/issue/$ISSUE_KEY/transitions" \
+              -d "{
+                \"transition\": {
+                  \"id\": \"$BLOCKED_TRANSITION_ID\"
+                }
+              }")
+            
+            if [ $? -eq 0 ]; then
+              echo "✅ Successfully transitioned issue to blocked status"
+            else
+              echo "❌ Failed to transition issue: $TRANSITION_RESULT"
+            fi
+          else
+            echo "❌ Could not find a suitable transition. Available transitions:"
+            echo "$TRANSITIONS" | jq -r '.transitions[] | "\(.id): \(.name) -> \(.to.name)"'
+            echo "❌ Please check your Jira workflow configuration for transitions containing: block, fail, pause, or stop"
+          fi

@@ -1,0 +1,82 @@
+name: AI-CODER-CALLER-FULL
+on: 
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: 'Base64 encoded prompt'
+        required: true
+        type: string
+      webhook_uuid:
+        description: 'Webhook uuid param'
+        required: true
+        type: string
+      create_pr:
+        description: 'create pr'
+        required: true
+        type: boolean
+      title:
+        description: 'Base64 encoded title for the PR'
+        required: true
+        type: string
+        default: ""
+      reviewer:
+        description: 'Optional reviewer username for the PR'
+        required: false
+        type: string
+        default: ""
+      ai_provider:
+        description: 'AI provider to use (claude or codex)'
+        required: false
+        type: string
+        default: "claude"
+  repository_dispatch:
+    types: [ai-coder-proxy]
+
+jobs:
+  prepare-inputs:
+    runs-on: ubuntu-latest
+    outputs:
+      prompt: ${{ steps.parse.outputs.prompt }}
+      webhook_uuid: ${{ steps.parse.outputs.webhook_uuid }}
+      create_pr: ${{ steps.parse.outputs.create_pr }}
+      title: ${{ steps.parse.outputs.title }}
+      reviewer: ${{ steps.parse.outputs.reviewer }}
+      ai_provider: ${{ steps.parse.outputs.ai_provider }}
+    steps:
+      - name: Parse inputs
+        id: parse
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "prompt=${{ github.event.inputs.prompt }}" >> $GITHUB_OUTPUT
+            echo "webhook_uuid=${{ github.event.inputs.webhook_uuid }}" >> $GITHUB_OUTPUT
+            echo "create_pr=${{ github.event.inputs.create_pr }}" >> $GITHUB_OUTPUT
+            echo "title=${{ github.event.inputs.title }}" >> $GITHUB_OUTPUT
+            echo "reviewer=${{ github.event.inputs.reviewer }}" >> $GITHUB_OUTPUT
+            echo "ai_provider=${{ github.event.inputs.ai_provider }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "prompt=${{ github.event.client_payload.prompt }}" >> $GITHUB_OUTPUT
+            echo "webhook_uuid=${{ github.event.client_payload.webhook_uuid }}" >> $GITHUB_OUTPUT
+            echo "create_pr=${{ github.event.client_payload.create_pr }}" >> $GITHUB_OUTPUT
+            echo "title=${{ github.event.client_payload.title }}" >> $GITHUB_OUTPUT
+            echo "reviewer=${{ github.event.client_payload.reviewer }}" >> $GITHUB_OUTPUT
+            echo "ai_provider=${{ github.event.client_payload.ai_provider || 'claude' }}" >> $GITHUB_OUTPUT
+          fi
+
+  call-ai-coder:
+    needs: prepare-inputs
+    uses: Datarails/dr_github_reusable/.github/workflows/ai-coder-n8n-reusable.yml@DR-38894-Automation
+    with:
+      prompt: ${{ needs.prepare-inputs.outputs.prompt }}
+      webhook_uuid: ${{ needs.prepare-inputs.outputs.webhook_uuid }}
+      create_pr: ${{ needs.prepare-inputs.outputs.create_pr == 'true' }}
+      title: ${{ needs.prepare-inputs.outputs.title }}
+      reviewer: ${{ needs.prepare-inputs.outputs.reviewer }}
+      ai_provider: ${{ needs.prepare-inputs.outputs.ai_provider }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GH_APP_ID: ${{ secrets.GH_APP_ID }}
+      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      N8N_WEBHOOK_URL: ${{ secrets.N8N_WEBHOOK_URL }}
+      GH_PER_TOKEN_TEST: ${{ secrets.GH_PER_TOKEN_TEST }}
+    
