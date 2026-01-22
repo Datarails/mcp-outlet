@@ -32,7 +32,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/archiver": "^6.0.3",
+    "@types/archiver": "^7.0.0",
     "@types/aws-lambda": "^8.10.119",
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.2",
