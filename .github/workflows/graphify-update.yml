@@ -22,7 +22,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install graphify
-        run: pip install graphifyy
+        run: pip install "graphifyy[all]"
 
       - name: Update code-only graph (zero LLM calls)
         run: graphify . --code-only --update --no-viz
