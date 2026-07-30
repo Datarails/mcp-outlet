@@ -63,7 +63,7 @@ jobs:
       issues: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -489,7 +489,7 @@ jobs:
           echo "Resolved BASE=$BASE, BRANCH=$BR"
 
       # (Re)checkout the base branch to ensure correct diff target
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.BASE }}
           fetch-depth: 0
