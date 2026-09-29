@@ -1,0 +1,58 @@
+# .dr-reviewer.yaml — dr-pr-reviewer per-repo config.
+# Read from the repo's DEFAULT branch (a PR branch can't weaken its own gates).
+# All keys optional. Bad values clamp to default (logged). An unparseable file
+# fails CLOSED — repo not reviewed. Uncomment a line to customize.
+#
+# Serverless sandbox runtime/proxy for MCP servers (Azure Functions). On-demand only: comment `@dr-pr-reviewer review` on a PR to run it.
+
+# ── Master switches ─────────────────────────────────────────
+enabled: true
+auto_review: false           # on-demand only; poller won't auto-enqueue
+# daily_diff_review: false   # scheduled review of default-branch merges
+
+# ── Scope ───────────────────────────────────────────────────
+path_filters:
+  - "!**/*.lock"
+  - "!package-lock.json"
+  - "!docs/**"
+dimensions: [correctness, security, sweep]
+# skip_authors: [dependabot[bot], renovate[bot], mend-for-github-com[bot]]
+# only_authors: []           # non-empty = ONLY these authors' PRs reviewed (pilot gate)
+
+# ── Findings ────────────────────────────────────────────────
+severity_threshold: low
+# max_findings: 25
+fail_on: critical
+# docstring_coverage: 80
+instructions: |
+  Universal MCP (Model Context Protocol) server runtime/proxy: forwards
+  JSON-RPC requests to arbitrary MCP-compatible servers in an isolated
+  sandbox, deployed to Azure Functions. Python (src/python, Pydantic) is
+  the production runtime; TypeScript (src/js, Zod) is a reference impl.
+  Review priorities:
+  - Sandbox isolation is the core security boundary: any change to how
+    untrusted MCP server commands/args are spawned, sandboxed, or have
+    their stdout/stderr captured must not weaken isolation or allow
+    command injection via the `command`/`args` JSON-RPC fields.
+  - Schema parity: Zod (TS) and Pydantic (Py) schemas must stay in sync;
+    a change to one without the other is a bug.
+  - Multi-cloud deploy config (deployments/, config.ts): AWS Lambda/Azure
+    Functions packaging changes can silently break one target.
+  - JWT handling (jsonwebtoken dep) and any auth on the proxy endpoint.
+  - Tracing/telemetry (OpenTelemetry spans) must not leak request bodies
+    from untrusted downstream MCP servers into logs.
+
+# ── Comment garnish ─────────────────────────────────────────
+summary: true
+# poem: false
+
+# ── Auto-approve (APPROVE not COMMENT when clean) ───────────
+auto_approve:
+  enabled: true
+  paths: ["**"]
+  max_risk: medium
+
+# ── Advanced ────────────────────────────────────────────────
+plugins: [dr-review-standards]
+# mcp_servers: {}
+# render_diff: {chart_repo, chart, version, values_glob}
