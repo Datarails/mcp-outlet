@@ -64,7 +64,7 @@ jobs:
 
   call-ai-coder:
     needs: prepare-inputs
-    uses: Datarails/dr_github_reusable/.github/workflows/ai-coder-n8n-reusable.yml@DR-38894-Automation
+    uses: Datarails/dr-github-reusable/.github/workflows/legacy-ai-coder-n8n-reusable.yml@main
     with:
       prompt: ${{ needs.prepare-inputs.outputs.prompt }}
       webhook_uuid: ${{ needs.prepare-inputs.outputs.webhook_uuid }}
